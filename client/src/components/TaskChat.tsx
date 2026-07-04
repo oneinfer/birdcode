@@ -13,7 +13,7 @@ import { MarkdownContent } from './MarkdownContent';
 import { useChat, ToolProgressEvent } from '../hooks/useChat';
 import { useAgentConfig } from '../hooks/useAgentConfig';
 import { handleChatKeyDown } from '../lib/keyboard';
-import { fileViewUrl, pickWorkspaceDirectory, startTask, updateCurrentProject } from '../lib/api';
+import { BASE, fileViewUrl, pickWorkspaceDirectory, startTask, updateCurrentProject } from '../lib/api';
 import { useStore } from '../lib/store';
 import { toErrorMessage } from '../lib/format';
 import type { AgentRunSettings } from '../lib/api';
@@ -134,7 +134,10 @@ function parseMessageAttachments(content: string): ChatAttachment[] {
   return Array.from(document.querySelectorAll('attachment')).map((element, index) => {
     const text = (tagName: string) => element.querySelector(tagName)?.textContent ?? '';
     const mimeType = text('mime_type') || 'application/octet-stream';
+    const attachmentId = text('attachment_id');
     const path = text('absolute_path');
+    const viewUrl = text('view_url');
+    const downloadUrl = text('download_url');
     const name = text('name') || path.split(/[\\/]/).pop() || 'attachment';
     const size = Number(text('size_bytes'));
     const kind: ChatAttachment['kind'] = element.getAttribute('kind') === 'image' || mimeType.startsWith('image/')
@@ -142,18 +145,39 @@ function parseMessageAttachments(content: string): ChatAttachment[] {
       : 'file';
 
     return {
-      id: `${path || name}-${index}`,
+      id: attachmentId || `${path || viewUrl || name}-${index}`,
       name,
       path,
+      viewUrl,
+      downloadUrl,
       mimeType,
       size: Number.isFinite(size) ? size : 0,
       kind,
     };
-  }).filter((attachment) => attachment.path);
+  }).filter((attachment) => attachment.path || attachment.viewUrl);
 }
 
 function displayMessageAttachments(attachments: ChatAttachment[]): ChatAttachment[] {
   return attachments;
+}
+
+function apiAttachmentUrl(url: string): string {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  const enterpriseMatch = url.match(/^\/organization\/([^/]+)\/tasks\/([^/]+)\/attachments\/([^/]+)\/(view|download)$/);
+  if (enterpriseMatch) {
+    const [, organizationId, taskId, attachmentId, action] = enterpriseMatch;
+    return `${BASE}/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}/${action}?organizationId=${encodeURIComponent(organizationId)}`;
+  }
+  return url.startsWith(BASE) ? url : `${BASE}${url.startsWith('/') ? url : `/${url}`}`;
+}
+
+function attachmentViewHref(attachment: ChatAttachment): string {
+  return attachment.viewUrl ? apiAttachmentUrl(attachment.viewUrl) : fileViewUrl(attachment.path);
+}
+
+function attachmentDownloadHref(attachment: ChatAttachment): string {
+  return attachment.downloadUrl ? apiAttachmentUrl(attachment.downloadUrl) : attachmentViewHref(attachment);
 }
 
 function MessageAttachmentList({
@@ -169,7 +193,7 @@ function MessageAttachmentList({
     <div className="mt-2 grid max-w-full gap-2">
       {attachments.map((attachment) => {
         const isImage = attachment.kind === 'image' || attachment.mimeType.startsWith('image/');
-        const href = fileViewUrl(attachment.path);
+        const href = attachmentViewHref(attachment);
 
         if (isImage) {
           return (
@@ -197,7 +221,7 @@ function MessageAttachmentList({
         return (
           <a
             key={attachment.id}
-            href={href}
+            href={attachmentDownloadHref(attachment)}
             target="_blank"
             rel="noreferrer"
             className="inline-flex max-w-sm items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
@@ -237,7 +261,7 @@ function ImageAttachmentViewer({
         <X size={18} />
       </button>
       <img
-        src={fileViewUrl(attachment.path)}
+        src={attachmentViewHref(attachment)}
         alt={attachment.name}
         className="max-h-[88vh] max-w-[92vw] rounded-lg bg-white object-contain shadow-2xl dark:bg-zinc-950"
         onClick={(event) => event.stopPropagation()}

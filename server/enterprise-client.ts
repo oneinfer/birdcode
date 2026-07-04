@@ -98,6 +98,26 @@ export async function proxyEnterpriseJson(req: Request, res: Response, path: str
   }
 }
 
+export async function proxyEnterpriseResponse(req: Request, res: Response, path: string, init: RequestInit = {}): Promise<void> {
+  try {
+    const response = await fetchWithTimeout(upstreamUrl(path), {
+      ...init,
+      headers: authHeaders(req, {
+        ...(init.headers as Record<string, string> | undefined),
+      }),
+    });
+    const contentType = response.headers.get('content-type');
+    const contentDisposition = response.headers.get('content-disposition');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    if (contentDisposition) res.setHeader('Content-Disposition', contentDisposition);
+    res.status(response.status);
+    const body = Buffer.from(await response.arrayBuffer());
+    res.send(body);
+  } catch (error) {
+    res.status(502).json({ error: toErrorMessage(error, 'Enterprise OpenBees is unavailable') });
+  }
+}
+
 export async function proxyEnterpriseSse(req: Request, res: Response, path: string): Promise<void> {
   try {
     const response = await fetch(upstreamUrl(path), {

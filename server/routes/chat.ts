@@ -23,7 +23,7 @@ import {
 import { enrichImageAttachmentContext } from '../image-context.js';
 import { loadOrganizationAccess, requireTaskMutable, requireTaskVisible } from '../organization-access.js';
 import { isLocalMode } from '../deployment-config.js';
-import { enterpriseJson, hasSelectedOrganization, organizationIdFromRequest, proxyEnterpriseJson } from '../enterprise-client.js';
+import { enterpriseJson, formDataFromRequestBody, hasSelectedOrganization, organizationIdFromRequest, proxyEnterpriseJson } from '../enterprise-client.js';
 import { taskFromEnterprise } from './tasks.js';
 
 export const chatRouter = Router();
@@ -131,7 +131,7 @@ chatRouter.post('/:id/messages', attachmentUploadMiddleware, async (req, res) =>
     if (!orgId) return res.status(400).json({ error: 'Organization ID required' });
     const content = typeof req.body?.content === 'string' ? req.body.content : null;
     if (!content) return res.status(400).json({ error: 'content is required' });
-    void cleanupUploadedAttachments(uploadedAttachments(req));
+    const files = uploadedAttachments(req);
     try {
       const raw = await enterpriseJson<Record<string, unknown>>(
         req,
@@ -141,14 +141,26 @@ chatRouter.post('/:id/messages', attachmentUploadMiddleware, async (req, res) =>
       if (localTask.status === 'pending' || localTask.status === 'assigned') {
         return res.status(409).json({ error: 'Move this task to In Progress before sending messages' });
       }
+      let runContent = content;
+      if (files.length > 0) {
+        const body = await formDataFromRequestBody({ content, role: 'user' }, files);
+        const message = await enterpriseJson<Record<string, unknown>>(
+          req,
+          `/organization/${encodeURIComponent(orgId)}/tasks/${encodeURIComponent(taskId)}/messages`,
+          { method: 'POST', body },
+        );
+        if (typeof message.content === 'string' && message.content.trim()) runContent = message.content;
+      }
       const { startEnterpriseTaskRun } = await import('../enterprise-runner.js');
-      const run = await startEnterpriseTaskRun(req, localTask, content);
+      const run = await startEnterpriseTaskRun(req, localTask, runContent, { persistUserMessage: files.length === 0 });
       if (!run?.runId) throw new Error('Enterprise run returned invalid result');
       return res.status(202).json({ runId: run.runId, run });
     } catch (error) {
       const status = (error as { status?: number }).status;
       if (status === 409) return res.status(409).json({ error: toErrorMessage(error, 'Task already has a message in progress') });
       return res.status(status ?? 502).json({ error: toErrorMessage(error, 'Failed to start enterprise task run') });
+    } finally {
+      await cleanupUploadedAttachments(files);
     }
   }
 

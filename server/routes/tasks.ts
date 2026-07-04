@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { deleteTask, getRecentTaskByDescription, getTask, getVisibleTasks, markTaskViewed, saveProject, setAppSetting, updateTask } from '../db/queries.js';
 import { parseRunSettingsBody } from '../agent-settings.js';
 import { broadcast } from '../events.js';
@@ -30,7 +30,7 @@ import {
 } from '../attachments.js';
 import { enrichImageAttachmentContext } from '../image-context.js';
 import { notifyTaskCreated } from '../native-notifications.js';
-import { enterpriseJson, formDataFromRequestBody, hasSelectedOrganization, organizationIdFromRequest } from '../enterprise-client.js';
+import { enterpriseJson, formDataFromRequestBody, hasSelectedOrganization, organizationIdFromRequest, proxyEnterpriseResponse } from '../enterprise-client.js';
 import type { Task, AgentRuntime, ReasoningEffort } from '../../shared/types.js';
 
 function isoToMs(v: unknown): number | null {
@@ -127,6 +127,24 @@ tasksRouter.get('/:id', async (req, res) => {
   const task = requireTaskVisible(getTask(req.params.id), organizationContext);
   if (!task) return res.status(404).json({ error: 'Task not found' });
   res.json({ task });
+});
+
+async function proxyTaskAttachment(req: Request, res: Response, action: 'view' | 'download') {
+  const orgId = organizationIdFromRequest(req);
+  if (!orgId) return res.status(400).json({ error: 'Organization ID required' });
+  return proxyEnterpriseResponse(
+    req,
+    res,
+    `/organization/${encodeURIComponent(orgId)}/tasks/${encodeURIComponent(String(req.params.id))}/attachments/${encodeURIComponent(String(req.params.attachmentId))}/${action}`,
+  );
+}
+
+tasksRouter.get('/:id/attachments/:attachmentId/view', async (req, res) => {
+  return proxyTaskAttachment(req, res, 'view');
+});
+
+tasksRouter.get('/:id/attachments/:attachmentId/download', async (req, res) => {
+  return proxyTaskAttachment(req, res, 'download');
 });
 
 function parseTaskMode(value: unknown): TaskMode {
@@ -231,41 +249,20 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
 
   if (isLocalMode() && hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
-    let savedAttachmentTaskId: string | null = null;
     try {
       const resolvedTitle = (title && typeof title === 'string' && title.trim())
         ? title.trim()
         : generateTaskTitle(description);
       const body = await enterpriseCreateBody(
         { ...(req.body as Record<string, unknown>), title: resolvedTitle },
-        [],
+        files,
       );
       const created = await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks`, {
         method: 'POST',
         body,
       });
-      let task = taskFromEnterprise(created);
-
-      if (files.length > 0) {
-        savedAttachmentTaskId = task.id;
-        const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(task.id, files));
-        if (attachments.length > 0) {
-          const nextDescription = appendAttachmentContext(description, attachments);
-          const patched = await enterpriseJson<Record<string, unknown>>(
-            req,
-            `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`,
-            {
-              method: 'PATCH',
-              body: JSON.stringify({ description: nextDescription }),
-            },
-          );
-          task = taskFromEnterprise(patched);
-        }
-      }
-
-      return res.status(201).json({ task });
+      return res.status(201).json({ task: taskFromEnterprise(created) });
     } catch (error) {
-      if (savedAttachmentTaskId) await deleteTaskAttachments(savedAttachmentTaskId).catch(() => undefined);
       return res.status((error as { status?: number }).status ?? 502).json({
         error: toErrorMessage(error, 'Failed to create organization task on enterprise OpenBees'),
       });
@@ -405,32 +402,26 @@ tasksRouter.post('/:id/start', attachmentUploadMiddleware, async (req, res) => {
       return res.status(409).json({ error: 'Only pending or assigned tasks can be started', code: 'task_not_inactive' });
     }
 
-    // Update enterprise task: status + non-local agent settings
+    // Start enterprise task and persist shared start-context attachments there.
     try {
-      let description = appendStartContext(current.description, current.title, startMessage);
-      const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(current.id, files));
-      description = appendAttachmentContext(description, attachments);
-      const patched = await enterpriseJson<Record<string, unknown>>(
+      const body = await formDataFromRequestBody({
+        workspace_path: workspacePath,
+        agent_runtime: resolvedRuntime,
+        agent_model: runSettings.taskFields.agent_model ?? null,
+        reasoning_effort: runSettings.taskFields.reasoning_effort ?? null,
+        task_mode: taskMode,
+        message: startMessage,
+      }, files);
+      const started = await enterpriseJson<Record<string, unknown>>(
         req,
-        `/organization/${orgId}/tasks/${encodeURIComponent(taskId)}`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({
-            status: 'in_progress',
-            description,
-            agent_runtime: resolvedRuntime,
-            agent_model: runSettings.taskFields.agent_model ?? null,
-            reasoning_effort: runSettings.taskFields.reasoning_effort ?? null,
-            task_mode: taskMode,
-          }),
-        },
+        `/organization/${orgId}/tasks/${encodeURIComponent(taskId)}/start`,
+        { method: 'POST', body },
       );
-      current = taskFromEnterprise(patched);
+      current = taskFromEnterprise(started);
     } catch (error) {
-      await deleteTaskAttachments(taskId).catch(() => undefined);
       await cleanupUploadedAttachments(files);
       return res.status((error as { status?: number }).status ?? 502).json({
-        error: toErrorMessage(error, 'Failed to update task on enterprise OpenBees'),
+        error: toErrorMessage(error, 'Failed to start task on enterprise OpenBees'),
       });
     } finally {
       await cleanupUploadedAttachments(files);

@@ -143,6 +143,8 @@ export interface ChatAttachment {
   id: string;
   name: string;
   path: string;
+  viewUrl?: string;
+  downloadUrl?: string;
   mimeType: string;
   size: number;
   kind: 'image' | 'file';
