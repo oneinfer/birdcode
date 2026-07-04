@@ -10,6 +10,7 @@ import { resolveBeesWorkspaceDir } from './paths.js';
 
 const ATTACHMENT_TMP_DIR = join(tmpdir(), 'bees-chat-attachments');
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_IMAGE_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_COUNT = 10;
 
 mkdirSync(ATTACHMENT_TMP_DIR, { recursive: true });
@@ -33,6 +34,18 @@ export function attachmentUploadMiddleware(req: Request, res: Response, next: Ne
       res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to upload attachments' });
       return;
     }
+    const files = uploadedAttachments(req);
+    const oversizedImage = files.find((file) => isImageUpload(file) && file.size > MAX_IMAGE_ATTACHMENT_BYTES);
+    if (oversizedImage) {
+      cleanupUploadedAttachments(files)
+        .finally(() => {
+          res.status(413).json({
+            error: `Image attachments must be 2 MB or smaller: ${oversizedImage.originalname || oversizedImage.filename}`,
+            code: 'IMAGE_ATTACHMENT_TOO_LARGE',
+          });
+        });
+      return;
+    }
     next();
   });
 }
@@ -43,6 +56,10 @@ export function uploadedAttachments(req: Request): Express.Multer.File[] {
 
 export async function cleanupUploadedAttachments(files: Express.Multer.File[]): Promise<void> {
   await Promise.all(files.map((file) => unlink(file.path).catch(() => undefined)));
+}
+
+function isImageUpload(file: Express.Multer.File): boolean {
+  return (file.mimetype || '').startsWith('image/');
 }
 
 export async function deleteTaskAttachments(taskId: string): Promise<void> {

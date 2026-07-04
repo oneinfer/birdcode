@@ -32,6 +32,7 @@ import type {
 } from '@shared/types';
 import { getStoredAccessToken, hasAuthSessionCookie } from './auth-storage';
 import { getSelectedOrganizationId } from './organization-selection';
+import { prepareAttachmentsForUpload } from './image-compression';
 
 export type { AgentRunSettings };
 
@@ -167,7 +168,7 @@ export function patchTask(
   });
 }
 
-export function startTask(
+export async function startTask(
   id: string,
   settings: {
     workspacePath: string;
@@ -180,6 +181,7 @@ export function startTask(
   attachments?: File[],
 ) {
   if (attachments?.length) {
+    const preparedAttachments = await prepareAttachmentsForUpload(attachments);
     const formData = new FormData();
     formData.append('workspacePath', settings.workspacePath);
     appendOptionalFormValue(formData, 'runtime', settings.runtime);
@@ -187,7 +189,7 @@ export function startTask(
     appendOptionalFormValue(formData, 'reasoningEffort', settings.reasoningEffort);
     appendOptionalFormValue(formData, 'taskMode', settings.taskMode);
     appendOptionalFormValue(formData, 'message', message);
-    for (const attachment of attachments) {
+    for (const attachment of preparedAttachments) {
       formData.append('attachments', attachment, attachment.name);
     }
 
@@ -209,7 +211,7 @@ export function markTaskViewed(id: string) {
   });
 }
 
-export function createTask(
+export async function createTask(
   description: string,
   title?: string,
   workspacePath?: string | null,
@@ -223,13 +225,14 @@ export function createTask(
   assignment?: { teamId?: string | null; assigneeEmail?: string | null },
 ) {
   if (attachments?.length) {
+    const preparedAttachments = await prepareAttachmentsForUpload(attachments);
     const formData = new FormData();
     formData.append('description', description);
     appendOptionalFormValue(formData, 'title', title);
     appendOptionalFormValue(formData, 'taskKind', taskKind);
     appendOptionalFormValue(formData, 'teamId', assignment?.teamId);
     appendOptionalFormValue(formData, 'assigneeEmail', assignment?.assigneeEmail);
-    for (const attachment of attachments) {
+    for (const attachment of preparedAttachments) {
       formData.append('attachments', attachment, attachment.name);
     }
 

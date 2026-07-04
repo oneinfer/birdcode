@@ -12,6 +12,7 @@ import { toErrorMessage } from '../lib/format';
 import type { AgentRunSettings } from '../lib/api';
 import { getSelectedOrganizationId } from '../lib/organization-selection';
 import { getStoredAccessToken, hasAuthSessionCookie } from '../lib/auth-storage';
+import { prepareAttachmentsForUpload } from '../lib/image-compression';
 
 export type { ContextUsage, ToolProgressEvent };
 
@@ -488,6 +489,9 @@ export function useChat() {
     const hasAttachments = Boolean(attachments?.length);
 
     try {
+      const preparedAttachments = attachments?.length
+        ? await prepareAttachmentsForUpload(attachments)
+        : [];
       const body = hasAttachments ? new FormData() : JSON.stringify({
         content,
         ...(runSettings ? { settings: runSettings } : {}),
@@ -499,7 +503,7 @@ export function useChat() {
         if (runSettings?.runtime) body.append('runtime', runSettings.runtime);
         if (runSettings?.model) body.append('model', runSettings.model);
         if (runSettings?.reasoningEffort) body.append('reasoningEffort', runSettings.reasoningEffort);
-        for (const attachment of attachments ?? []) {
+        for (const attachment of preparedAttachments) {
           body.append('attachments', attachment, attachment.name);
         }
       }
