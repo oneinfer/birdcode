@@ -225,6 +225,37 @@ async function enterpriseCreateBody(
   });
 }
 
+function enterpriseCreateJsonBody(reqBody: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(reqBody)) {
+    const transformed = enterpriseCreateField(key, value);
+    if (!transformed) continue;
+    const [nextKey, nextValue] = transformed;
+    if (nextValue === undefined || nextValue === null || nextValue === '') continue;
+    body[nextKey] = nextValue;
+  }
+  return body;
+}
+
+async function createEnterpriseTaskWithoutFiles(
+  req: Request,
+  orgId: string,
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  try {
+    const body = await enterpriseCreateBody(payload, []);
+    return await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks`, {
+      method: 'POST',
+      body,
+    });
+  } catch {
+    return await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify(enterpriseCreateJsonBody(payload)),
+    });
+  }
+}
+
 function startMessageFromBody(body: Record<string, unknown>): string {
   const value = body.message ?? body.additionalContext ?? body.additional_context;
   return typeof value === 'string' ? value.trim() : '';
@@ -267,28 +298,49 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
           const resolvedTitle = (title && typeof title === 'string' && title.trim())
             ? title.trim()
             : generateTaskTitle(description);
-          const body = await enterpriseCreateBody(
+          const created = await createEnterpriseTaskWithoutFiles(
+            req,
+            orgId,
             { ...(req.body as Record<string, unknown>), title: resolvedTitle },
-            [],
           );
-          const created = await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks`, {
-            method: 'POST',
-            body,
-          });
           let task = taskFromEnterprise(created);
 
-          savedAttachmentTaskId = task.id;
-          const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(task.id, files));
-          if (attachments.length > 0) {
-            const patched = await enterpriseJson<Record<string, unknown>>(
+          try {
+            const messageBody = await formDataFromRequestBody({ content: description, role: 'user' }, files);
+            const message = await enterpriseJson<Record<string, unknown>>(
               req,
-              `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`,
-              {
-                method: 'PATCH',
-                body: JSON.stringify({ description: appendAttachmentContext(description, attachments) }),
-              },
+              `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}/messages`,
+              { method: 'POST', body: messageBody },
             );
-            task = taskFromEnterprise(patched);
+            if (typeof message.content === 'string' && message.content.trim()) {
+              const patched = await enterpriseJson<Record<string, unknown>>(
+                req,
+                `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`,
+                {
+                  method: 'PATCH',
+                  body: JSON.stringify({ description: message.content }),
+                },
+              );
+              task = taskFromEnterprise(patched);
+            }
+          } catch (enterpriseAttachmentError) {
+            console.warn('[enterprise] create succeeded but attachment message upload failed; using local fallback attachments', {
+              taskId: task.id,
+              error: toErrorMessage(enterpriseAttachmentError, 'Attachment upload failed'),
+            });
+            savedAttachmentTaskId = task.id;
+            const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(task.id, files));
+            if (attachments.length > 0) {
+              const patched = await enterpriseJson<Record<string, unknown>>(
+                req,
+                `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`,
+                {
+                  method: 'PATCH',
+                  body: JSON.stringify({ description: appendAttachmentContext(description, attachments) }),
+                },
+              );
+              task = taskFromEnterprise(patched);
+            }
           }
           return res.status(201).json({ task });
         } catch (fallbackError) {
