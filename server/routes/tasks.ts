@@ -206,20 +206,41 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
 
   if (isLocalMode() && hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
+    let savedAttachmentTaskId: string | null = null;
     try {
       const resolvedTitle = (title && typeof title === 'string' && title.trim())
         ? title.trim()
         : generateTaskTitle(description);
       const body = await enterpriseCreateBody(
         { ...(req.body as Record<string, unknown>), title: resolvedTitle },
-        files,
+        [],
       );
       const created = await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks`, {
         method: 'POST',
         body,
       });
-      return res.status(201).json({ task: taskFromEnterprise(created) });
+      let task = taskFromEnterprise(created);
+
+      if (files.length > 0) {
+        savedAttachmentTaskId = task.id;
+        const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(task.id, files));
+        if (attachments.length > 0) {
+          const nextDescription = appendAttachmentContext(description, attachments);
+          const patched = await enterpriseJson<Record<string, unknown>>(
+            req,
+            `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify({ description: nextDescription }),
+            },
+          );
+          task = taskFromEnterprise(patched);
+        }
+      }
+
+      return res.status(201).json({ task });
     } catch (error) {
+      if (savedAttachmentTaskId) await deleteTaskAttachments(savedAttachmentTaskId).catch(() => undefined);
       return res.status((error as { status?: number }).status ?? 502).json({
         error: toErrorMessage(error, 'Failed to create organization task on enterprise OpenBees'),
       });

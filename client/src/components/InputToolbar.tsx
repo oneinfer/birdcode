@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search, Sparkles, Zap, type LucideIcon } from 'lucide-react';
-import { REASONING_EFFORTS, type AgentDefaults, type AgentModelGroup, type AgentRuntime, type AgentRuntimeOption, type ContextUsage, type ReasoningEffort } from '@shared/types';
+import { REASONING_EFFORTS, type AgentDefaults, type AgentModelGroup, type AgentModelPricing, type AgentRuntime, type AgentRuntimeOption, type ContextUsage, type ReasoningEffort } from '@shared/types';
 import { formatTokenCount } from '../lib/format';
 
 export function ContextRing({ context }: { context: ContextUsage }) {
@@ -383,6 +383,7 @@ interface ModelPickerItem {
   label: string;
   provider: string;
   isCurrentDefault?: boolean;
+  pricing?: AgentModelPricing;
 }
 
 interface ModelPickerGroup {
@@ -446,6 +447,51 @@ function modelMatchesTerms(model: ModelPickerItem, terms: string[]): boolean {
 
 function modelRowKey(model: ModelPickerItem): string {
   return `${model.provider}:${model.value}`;
+}
+
+function formatUsdPrice(value: number): string {
+  const digits = value > 0 && value < 0.01 ? 4 : 2;
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: digits,
+  })}`;
+}
+
+function pricingUnitLabel(pricing: AgentModelPricing): string {
+  switch (pricing.unit) {
+    case 'million_tokens':
+      return '1M tokens';
+    case 'image':
+      return 'image';
+    case 'video':
+      return 'video';
+    case 'audio_minute':
+      return 'audio min';
+    case 'request':
+      return 'request';
+    default:
+      return 'unit';
+  }
+}
+
+function formatModelPricing(pricing?: AgentModelPricing): string | null {
+  if (!pricing) return null;
+  if (pricing.display) return pricing.display;
+
+  const unit = pricingUnitLabel(pricing);
+  const input = typeof pricing.inputUsd === 'number' ? formatUsdPrice(pricing.inputUsd) : null;
+  const output = typeof pricing.outputUsd === 'number' ? formatUsdPrice(pricing.outputUsd) : null;
+
+  if (pricing.unit === 'million_tokens') {
+    if (input && output) return `${input} in / ${output} out per ${unit}`;
+    if (input) return `${input} in per ${unit}`;
+    if (output) return `${output} out per ${unit}`;
+    return `per ${unit}`;
+  }
+
+  if (input && output && input !== output) return `${input} in / ${output} out per ${unit}`;
+  if (input || output) return `${input ?? output} per ${unit}`;
+  return `per ${unit}`;
 }
 
 function findInitialModelGroupId(groups: ModelPickerGroup[], value: string): string {
@@ -516,6 +562,7 @@ export function ModelPicker({
           label: model.label,
           provider: providerLabel,
           isCurrentDefault: model.isCurrentDefault,
+          pricing: model.pricing,
         })),
       };
     });
@@ -852,6 +899,7 @@ export function ModelPicker({
                   visibleModels.map((model, index) => {
                     const selected = model.value === value;
                     const active = index === activeModelIndex;
+                    const pricingLabel = formatModelPricing(model.pricing);
 
                     return (
                       <button
@@ -880,6 +928,11 @@ export function ModelPicker({
                             </span>
                           )}
                         </span>
+                        {pricingLabel && (
+                          <span className="shrink-0 rounded-md bg-zinc-50 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                            {pricingLabel}
+                          </span>
+                        )}
                         {model.isCurrentDefault && (
                           <span className="shrink-0 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                             Default

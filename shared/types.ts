@@ -224,6 +224,23 @@ export interface AgentModelOption {
   label: string;
   source: 'current' | 'catalog' | 'custom' | 'alias';
   isCurrentDefault?: boolean;
+  pricing?: AgentModelPricing;
+}
+
+export type AgentModelPricingUnit =
+  | 'million_tokens'
+  | 'image'
+  | 'video'
+  | 'audio_minute'
+  | 'request'
+  | 'unknown';
+
+export interface AgentModelPricing {
+  unit: AgentModelPricingUnit;
+  inputUsd?: number | null;
+  outputUsd?: number | null;
+  cachedInputUsd?: number | null;
+  display?: string | null;
 }
 
 export interface AgentModelGroup {

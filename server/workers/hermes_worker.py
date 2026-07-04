@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import inspect
 import json
+import math
 import os
 import re
 import sys
@@ -453,6 +454,157 @@ def _dedupe(values: list[str]) -> list[str]:
     return out
 
 
+def _model_payload_id(raw_model: Any) -> str | None:
+    if isinstance(raw_model, str):
+        return _string_or_none(raw_model)
+    if not isinstance(raw_model, dict):
+        return None
+    for key in ("id", "model", "name", "slug"):
+        value = _string_or_none(raw_model.get(key))
+        if value:
+            return value
+    return None
+
+
+def _model_payload_label(raw_model: Any, model_id: str) -> str:
+    if not isinstance(raw_model, dict):
+        return model_id
+    return (
+        _string_or_none(raw_model.get("label"))
+        or _string_or_none(raw_model.get("display_name"))
+        or _string_or_none(raw_model.get("name"))
+        or model_id
+    )
+
+
+def _float_field(data: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = data.get(key)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return number
+    return None
+
+
+def _model_pricing_unit(raw_model: dict[str, Any], model_id: str) -> str:
+    pricing = raw_model.get("pricing")
+    pricing_data = pricing if isinstance(pricing, dict) else raw_model
+    explicit_unit = _string_or_none(pricing_data.get("unit")) or _string_or_none(pricing_data.get("billing_unit"))
+    if explicit_unit:
+        normalized = explicit_unit.lower().replace("-", "_").replace(" ", "_")
+        if "token" in normalized:
+            return "million_tokens"
+        if "image" in normalized:
+            return "image"
+        if "video" in normalized:
+            return "video"
+        if "audio" in normalized or "minute" in normalized:
+            return "audio_minute"
+        if "request" in normalized:
+            return "request"
+
+    pricing_keys = " ".join(str(key).lower() for key in pricing_data.keys())
+    if "video" in pricing_keys:
+        return "video"
+    if "image" in pricing_keys:
+        return "image"
+    if "audio" in pricing_keys or "minute" in pricing_keys:
+        return "audio_minute"
+    if (
+        "token" in pricing_keys
+        or "prompt" in pricing_keys
+        or "completion" in pricing_keys
+        or "input_price" in pricing_keys
+        or "output_price" in pricing_keys
+        or "input_cost" in pricing_keys
+        or "output_cost" in pricing_keys
+    ):
+        return "million_tokens"
+
+    descriptors: list[str] = [model_id]
+    for key in ("type", "modality", "category", "mode"):
+        value = raw_model.get(key)
+        if isinstance(value, str):
+            descriptors.append(value)
+    for key in ("modalities", "capabilities", "features", "tags"):
+        value = raw_model.get(key)
+        if isinstance(value, list):
+            descriptors.extend(str(item) for item in value)
+
+    descriptor = " ".join(descriptors).lower()
+    if "video" in descriptor:
+        return "video"
+    if "image" in descriptor or "vision_generation" in descriptor:
+        return "image"
+    if "audio" in descriptor or "speech" in descriptor or "transcription" in descriptor:
+        return "audio_minute"
+    if "text" in descriptor or "chat" in descriptor or "language" in descriptor or "llm" in descriptor:
+        return "million_tokens"
+    return "unknown"
+
+
+def _model_pricing(raw_model: Any, model_id: str) -> dict[str, Any] | None:
+    if not isinstance(raw_model, dict):
+        return None
+
+    pricing = raw_model.get("pricing")
+    pricing_data = pricing if isinstance(pricing, dict) else raw_model
+    unit = _model_pricing_unit(raw_model, model_id)
+    result: dict[str, Any] = {"unit": unit}
+
+    input_usd = _float_field(
+        pricing_data,
+        "inputUsd",
+        "input_usd",
+        "input_price",
+        "prompt_price",
+        "input_cost",
+        "prompt_cost",
+        "input_price_per_million_tokens",
+        "prompt_price_per_million_tokens",
+        "price_per_image",
+        "image_price",
+        "price_per_video",
+        "video_price",
+    )
+    output_usd = _float_field(
+        pricing_data,
+        "outputUsd",
+        "output_usd",
+        "output_price",
+        "completion_price",
+        "output_cost",
+        "completion_cost",
+        "output_price_per_million_tokens",
+        "completion_price_per_million_tokens",
+    )
+    cached_input_usd = _float_field(
+        pricing_data,
+        "cachedInputUsd",
+        "cached_input_usd",
+        "cached_input_price",
+        "cache_read_price",
+        "cached_prompt_price",
+    )
+    display = _string_or_none(pricing_data.get("display")) or _string_or_none(pricing_data.get("price_display"))
+
+    if input_usd is not None:
+        result["inputUsd"] = input_usd
+    if output_usd is not None:
+        result["outputUsd"] = output_usd
+    if cached_input_usd is not None:
+        result["cachedInputUsd"] = cached_input_usd
+    if display:
+        result["display"] = display
+
+    return result if len(result) > 1 or unit != "unknown" else None
+
+
 def _add_model(
     groups: dict[str, list[dict[str, Any]]],
     provider: str,
@@ -460,18 +612,22 @@ def _add_model(
     source: str,
     default_model: str | None,
     label: str | None = None,
+    pricing: dict[str, Any] | None = None,
 ) -> None:
     if not model_id:
         return
     bucket = groups.setdefault(provider or "configured", [])
     if any(item["id"] == model_id for item in bucket):
         return
-    bucket.append({
+    option = {
         "id": model_id,
         "label": label or model_id,
         "source": source,
         "isCurrentDefault": bool(default_model and model_id == default_model),
-    })
+    }
+    if pricing:
+        option["pricing"] = pricing
+    bucket.append(option)
 
 
 def _provider_model_ids_with_timeout(provider: str, timeout: float = 4.0) -> list[str]:
@@ -548,11 +704,19 @@ def _list_authenticated_model_groups(
         if not isinstance(models, list):
             continue
         for raw_model in models:
-            model_id = _string_or_none(raw_model)
+            model_id = _model_payload_id(raw_model)
             if not model_id:
                 continue
             option_id = model_id if is_user_defined else _model_option_id(slug, model_id, active_provider)
-            _add_model(groups, group_name, option_id, source, default_model, label=model_id)
+            _add_model(
+                groups,
+                group_name,
+                option_id,
+                source,
+                default_model,
+                label=_model_payload_label(raw_model, model_id),
+                pricing=_model_pricing(raw_model, model_id),
+            )
 
     return groups
 
