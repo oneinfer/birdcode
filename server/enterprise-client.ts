@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { Request, Response } from 'express';
 import { enterpriseApiBaseUrl } from './deployment-config.js';
-import { tokenFromRequest } from './auth.js';
+import { parseCookies, tokenFromRequest } from './auth.js';
 import { toErrorMessage } from './errors.js';
 
 const ENTERPRISE_FETCH_TIMEOUT_MS = 15_000;
@@ -32,7 +32,8 @@ function authHeaders(req: Request, extra?: HeadersInput): Record<string, string>
   const token = tokenFromRequest(req);
   const organizationId = organizationIdFromRequest(req);
   const cookie = req.header('cookie');
-  const csrfToken = req.header('x-csrf-token');
+  const cookies = parseCookies(cookie);
+  const csrfToken = req.header('x-csrf-token') || cookies.bees_csrf_token;
   return {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(cookie ? { Cookie: cookie } : {}),
@@ -73,7 +74,9 @@ export async function enterpriseJson<T>(
   if (!response.ok) {
     const message = body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
       ? body.error
-      : `Enterprise OpenBees returned HTTP ${response.status}`;
+      : body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string'
+        ? body.detail
+        : `Enterprise OpenBees returned HTTP ${response.status}`;
     const error = new Error(message) as Error & { status?: number; body?: unknown };
     error.status = response.status;
     error.body = body;
