@@ -39,6 +39,13 @@ function isoToMs(v: unknown): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+function optionalString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 export function taskFromEnterprise(r: Record<string, unknown>): Task {
   return {
     id: String(r.task_id ?? r.id ?? ''),
@@ -50,11 +57,15 @@ export function taskFromEnterprise(r: Record<string, unknown>): Task {
     workspace_path: r.workspace_path != null ? String(r.workspace_path) : null,
     organization_id: r.organization_id != null ? String(r.organization_id) : null,
     creator_developer_id: r.creator_developer_id != null ? String(r.creator_developer_id) : null,
-    creator_email: r.created_by_email != null ? String(r.created_by_email) : null,
+    creator_email: optionalString(r.created_by_email, r.creator_email),
+    creator_first_name: optionalString(r.created_by_first_name, r.creator_first_name),
+    creator_last_name: optionalString(r.created_by_last_name, r.creator_last_name),
     team_id: r.team_id != null ? String(r.team_id) : null,
     team_name: r.team_name != null ? String(r.team_name) : null,
     assignee_developer_id: r.assignee_developer_id != null ? String(r.assignee_developer_id) : null,
-    assignee_email: r.assigned_to_email != null ? String(r.assigned_to_email) : null,
+    assignee_email: optionalString(r.assigned_to_email, r.assignee_email),
+    assignee_first_name: optionalString(r.assigned_to_first_name, r.assignee_first_name),
+    assignee_last_name: optionalString(r.assigned_to_last_name, r.assignee_last_name),
     agent_runtime: r.agent_runtime != null ? (r.agent_runtime as AgentRuntime) : null,
     agent_model: r.agent_model != null ? String(r.agent_model) : null,
     reasoning_effort: r.reasoning_effort != null ? (r.reasoning_effort as ReasoningEffort) : null,
@@ -295,10 +306,14 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
     organizationId: taskAssignment.organization_id,
     creatorDeveloperId: taskAssignment.creator_developer_id,
     creatorEmail: taskAssignment.creator_email,
+    creatorFirstName: taskAssignment.creator_first_name,
+    creatorLastName: taskAssignment.creator_last_name,
     teamId: taskAssignment.team_id,
     teamName: taskAssignment.team_name,
     assigneeDeveloperId: taskAssignment.assignee_developer_id,
     assigneeEmail: taskAssignment.assignee_email,
+    assigneeFirstName: taskAssignment.assignee_first_name,
+    assigneeLastName: taskAssignment.assignee_last_name,
   });
 
   try {
@@ -541,6 +556,8 @@ tasksRouter.patch('/:id', async (req, res) => {
       fields.team_name = taskAssignment.team_name;
       fields.assignee_developer_id = taskAssignment.assignee_developer_id;
       fields.assignee_email = taskAssignment.assignee_email;
+      fields.assignee_first_name = taskAssignment.assignee_first_name;
+      fields.assignee_last_name = taskAssignment.assignee_last_name;
     }
   } catch (error) {
     return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid task settings' });

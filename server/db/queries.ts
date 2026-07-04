@@ -35,14 +35,16 @@ const stmtTaskIdsByWorkspacePath = db.prepare('SELECT id FROM tasks WHERE worksp
 const stmtInsertTask = db.prepare(`
   INSERT INTO tasks (
     id, title, description, status, task_kind, task_mode, workspace_path,
-    organization_id, creator_developer_id, creator_email, team_id, team_name, assignee_developer_id, assignee_email,
+    organization_id, creator_developer_id, creator_email, creator_first_name, creator_last_name,
+    team_id, team_name, assignee_developer_id, assignee_email, assignee_first_name, assignee_last_name,
     agent_runtime, agent_model, reasoning_effort,
     created_at, updated_at, last_agent_response_at, last_viewed_at,
     last_context_used_tokens, last_context_window_tokens
   )
   VALUES (
     @id, @title, @description, @status, @task_kind, @task_mode, @workspace_path,
-    @organization_id, @creator_developer_id, @creator_email, @team_id, @team_name, @assignee_developer_id, @assignee_email,
+    @organization_id, @creator_developer_id, @creator_email, @creator_first_name, @creator_last_name,
+    @team_id, @team_name, @assignee_developer_id, @assignee_email, @assignee_first_name, @assignee_last_name,
     @agent_runtime, @agent_model, @reasoning_effort,
     @created_at, @updated_at, @last_agent_response_at, @last_viewed_at,
     @last_context_used_tokens, @last_context_window_tokens
@@ -207,10 +209,14 @@ export function insertTask(task: {
   organization_id?: string | null;
   creator_developer_id?: string | null;
   creator_email?: string | null;
+  creator_first_name?: string | null;
+  creator_last_name?: string | null;
   team_id?: string | null;
   team_name?: string | null;
   assignee_developer_id?: string | null;
   assignee_email?: string | null;
+  assignee_first_name?: string | null;
+  assignee_last_name?: string | null;
   agent_runtime?: AgentRuntime | null;
   agent_model?: string | null;
   reasoning_effort?: ReasoningEffort | null;
@@ -229,10 +235,14 @@ export function insertTask(task: {
     organization_id: task.organization_id ?? null,
     creator_developer_id: task.creator_developer_id ?? null,
     creator_email: task.creator_email ?? null,
+    creator_first_name: task.creator_first_name ?? null,
+    creator_last_name: task.creator_last_name ?? null,
     team_id: task.team_id ?? null,
     team_name: task.team_name ?? null,
     assignee_developer_id: task.assignee_developer_id ?? null,
     assignee_email: task.assignee_email ?? null,
+    assignee_first_name: task.assignee_first_name ?? null,
+    assignee_last_name: task.assignee_last_name ?? null,
     agent_runtime: task.agent_runtime ?? null,
     agent_model: task.agent_model ?? null,
     reasoning_effort: task.reasoning_effort ?? null,
@@ -256,10 +266,14 @@ const ALLOWED_UPDATE_FIELDS = new Set<string>([
   'organization_id',
   'creator_developer_id',
   'creator_email',
+  'creator_first_name',
+  'creator_last_name',
   'team_id',
   'team_name',
   'assignee_developer_id',
   'assignee_email',
+  'assignee_first_name',
+  'assignee_last_name',
   'agent_runtime',
   'agent_model',
   'reasoning_effort',
@@ -279,10 +293,14 @@ type TaskUpdateFields = Pick<
   | 'organization_id'
   | 'creator_developer_id'
   | 'creator_email'
+  | 'creator_first_name'
+  | 'creator_last_name'
   | 'team_id'
   | 'team_name'
   | 'assignee_developer_id'
   | 'assignee_email'
+  | 'assignee_first_name'
+  | 'assignee_last_name'
   | 'agent_runtime'
   | 'agent_model'
   | 'reasoning_effort'

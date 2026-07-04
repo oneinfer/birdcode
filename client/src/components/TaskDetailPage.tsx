@@ -53,8 +53,8 @@ function formatRuntimeLabel(runtime: string | null): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function displayIdentity(email: string | null, fallback: string): string {
-  return email?.trim() || fallback;
+function displayIdentity(firstName: string | null, lastName: string | null, email: string | null, fallback: string): string {
+  return firstName?.trim() || lastName?.trim() || email?.trim() || fallback;
 }
 
 export function TaskDetailPage() {
@@ -287,9 +287,9 @@ export function TaskDetailPage() {
               </div>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              {task.assignee_email && (
+              {(task.assignee_email || task.assignee_first_name) && (
                 <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  Assignee: {displayIdentity(task.assignee_email, 'Unassigned')}
+                  Assignee: {displayIdentity(task.assignee_first_name, task.assignee_last_name, task.assignee_email, 'Unassigned')}
                 </span>
               )}
               {task.team_name && (
@@ -297,9 +297,9 @@ export function TaskDetailPage() {
                   Team: {task.team_name}
                 </span>
               )}
-              {task.creator_email && (
+              {(task.creator_email || task.creator_first_name) && (
                 <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  Creator: {displayIdentity(task.creator_email, 'Unknown')}
+                  Creator: {displayIdentity(task.creator_first_name, task.creator_last_name, task.creator_email, 'Unknown')}
                 </span>
               )}
               {task.agent_model && (
@@ -363,6 +363,7 @@ export function TaskDetailPage() {
             taskId={task.id}
             taskStatus={task.status}
             taskMode={task.task_mode}
+            taskDescription={task.description}
             initialMessage={initialMessage}
             initialSettings={initialSettings}
             workspacePath={task.workspace_path}

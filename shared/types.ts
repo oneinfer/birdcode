@@ -32,10 +32,14 @@ export interface Task {
   organization_id: string | null;
   creator_developer_id: string | null;
   creator_email: string | null;
+  creator_first_name: string | null;
+  creator_last_name: string | null;
   team_id: string | null;
   team_name: string | null;
   assignee_developer_id: string | null;
   assignee_email: string | null;
+  assignee_first_name: string | null;
+  assignee_last_name: string | null;
   agent_runtime: AgentRuntime | null;
   agent_model: string | null;
   reasoning_effort: ReasoningEffort | null;

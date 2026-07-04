@@ -73,6 +73,8 @@ export interface OrganizationUpdatePayload {
 export interface OrganizationMemberResponse {
   developer_id: string;
   email: string;
+  first_name?: string | null;
+  last_name?: string | null;
   role: OrganizationRole;
   joined_at: string;
   created_at: string;
@@ -123,6 +125,8 @@ export interface TeamMemberResponse {
   team_id: string;
   developer_id: string;
   email: string;
+  first_name?: string | null;
+  last_name?: string | null;
   role: OrganizationRole;
   created_at: string;
 }

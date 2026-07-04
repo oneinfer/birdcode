@@ -20,6 +20,10 @@ interface AssignmentControlsProps {
   onAssigneeChange: (email: string) => void;
 }
 
+function memberLabel(member: OrganizationMemberResponse): string {
+  return member.first_name?.trim() || member.last_name?.trim() || member.email;
+}
+
 export function AssignmentControls({
   teamId,
   assigneeEmail,
@@ -126,7 +130,7 @@ export function AssignmentControls({
         >
           <option value="">Unassigned</option>
           {assigneeOptions.map((member) => (
-            <option key={member.developer_id} value={member.email}>{member.email}</option>
+            <option key={member.developer_id} value={member.email}>{memberLabel(member)}</option>
           ))}
         </select>
       </label>

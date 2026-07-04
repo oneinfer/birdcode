@@ -81,10 +81,14 @@ export function createTaskRecord(input: {
   organizationId?: string | null;
   creatorDeveloperId?: string | null;
   creatorEmail?: string | null;
+  creatorFirstName?: string | null;
+  creatorLastName?: string | null;
   teamId?: string | null;
   teamName?: string | null;
   assigneeDeveloperId?: string | null;
   assigneeEmail?: string | null;
+  assigneeFirstName?: string | null;
+  assigneeLastName?: string | null;
   runtime?: AgentRuntime | null;
   model?: string | null;
   reasoningEffort?: ReasoningEffort | null;
@@ -104,10 +108,14 @@ export function createTaskRecord(input: {
     organization_id: input.organizationId ?? null,
     creator_developer_id: input.creatorDeveloperId ?? null,
     creator_email: input.creatorEmail ?? null,
+    creator_first_name: input.creatorFirstName ?? null,
+    creator_last_name: input.creatorLastName ?? null,
     team_id: input.teamId ?? null,
     team_name: input.teamName ?? null,
     assignee_developer_id: input.assigneeDeveloperId ?? null,
     assignee_email: input.assigneeEmail ?? null,
+    assignee_first_name: input.assigneeFirstName ?? null,
+    assignee_last_name: input.assigneeLastName ?? null,
     agent_runtime: input.runtime ?? defaultRuntime(),
     agent_model: input.model ?? null,
     reasoning_effort: input.reasoningEffort ?? null,

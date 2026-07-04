@@ -7,15 +7,21 @@ import { timeAgo } from '../lib/format';
 import { hasUnseenAgentResponse } from '../lib/taskState';
 import { TaskContextMenu } from './TaskContextMenu';
 
-function compactIdentity(value: string | null): string {
-  if (!value) return '';
-  return value.split('@')[0] || value;
+function compactIdentity(firstName: string | null, lastName: string | null, email: string | null): string {
+  const first = firstName?.trim();
+  if (first) return first;
+  const last = lastName?.trim();
+  if (last) return last;
+  if (!email) return '';
+  return email.split('@')[0] || email;
 }
 
 function TaskCardBody({ task, isStreaming = false }: { task: Task; isStreaming?: boolean }) {
   const isUnseen = hasUnseenAgentResponse(task);
-  const assigneeLabel = task.assignee_email ? compactIdentity(task.assignee_email) : '';
-  const creatorLabel = compactIdentity(task.creator_email);
+  const assigneeLabel = task.assignee_email || task.assignee_first_name
+    ? compactIdentity(task.assignee_first_name, task.assignee_last_name, task.assignee_email)
+    : '';
+  const creatorLabel = compactIdentity(task.creator_first_name, task.creator_last_name, task.creator_email);
   const timeRowClass = isStreaming
     ? 'font-semibold text-zinc-600 dark:text-zinc-300'
     : isUnseen

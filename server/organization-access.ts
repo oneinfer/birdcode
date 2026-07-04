@@ -9,6 +9,8 @@ const LOCAL_PERSONAL_DEVELOPER_ID = 'local-vantage-user';
 export interface OrganizationMember {
   developer_id: string;
   email: string;
+  first_name?: string | null;
+  last_name?: string | null;
   role?: string;
 }
 
@@ -30,6 +32,8 @@ export interface OrganizationAccessContext {
   accessToken: string | null;
   developerId: string;
   email: string | null;
+  firstName: string | null;
+  lastName: string | null;
   organizationId: string | null;
   members: OrganizationMember[];
   teams: Team[];
@@ -48,10 +52,14 @@ export interface ResolvedTaskAssignment {
   organization_id: string | null;
   creator_developer_id: string;
   creator_email: string | null;
+  creator_first_name: string | null;
+  creator_last_name: string | null;
   team_id: string | null;
   team_name: string | null;
   assignee_developer_id: string | null;
   assignee_email: string | null;
+  assignee_first_name: string | null;
+  assignee_last_name: string | null;
 }
 
 export interface VisibilityParams {
@@ -135,6 +143,8 @@ export async function loadOrganizationAccess(req: Request, organizationIdOverrid
   const authed = req as RequestWithAuth;
   const organizationId = organizationIdOverride ?? selectedOrganizationId(req);
   const email = typeof authed.developer?.email === 'string' ? authed.developer.email : null;
+  const firstName = typeof authed.developer?.first_name === 'string' ? authed.developer.first_name : null;
+  const lastName = typeof authed.developer?.last_name === 'string' ? authed.developer.last_name : null;
   const accessToken = authed.accessToken ?? null;
 
   if (!organizationId) {
@@ -143,6 +153,8 @@ export async function loadOrganizationAccess(req: Request, organizationIdOverrid
       accessToken: null,
       developerId: LOCAL_PERSONAL_DEVELOPER_ID,
       email: null,
+      firstName: null,
+      lastName: null,
       organizationId: null,
       members: [],
       teams: [],
@@ -193,6 +205,8 @@ export async function loadOrganizationAccess(req: Request, organizationIdOverrid
     accessToken,
     developerId,
     email,
+    firstName,
+    lastName,
     organizationId,
     members,
     teams,
@@ -299,10 +313,14 @@ export function resolveTaskAssignment(
       organization_id: null,
       creator_developer_id: context.developerId,
       creator_email: context.email,
+      creator_first_name: null,
+      creator_last_name: null,
       team_id: null,
       team_name: null,
       assignee_developer_id: null,
       assignee_email: null,
+      assignee_first_name: null,
+      assignee_last_name: null,
     };
   }
 
@@ -331,9 +349,13 @@ export function resolveTaskAssignment(
     organization_id: context.organizationId,
     creator_developer_id: context.developerId,
     creator_email: context.email,
+    creator_first_name: context.firstName,
+    creator_last_name: context.lastName,
     team_id: team?.id ?? null,
     team_name: team?.name ?? null,
     assignee_developer_id: assignee?.developer_id ?? null,
     assignee_email: assignee?.email ?? null,
+    assignee_first_name: assignee?.first_name ?? null,
+    assignee_last_name: assignee?.last_name ?? null,
   };
 }

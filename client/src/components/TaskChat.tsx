@@ -23,6 +23,7 @@ interface TaskChatProps {
   taskId: string;
   taskStatus: TaskStatus;
   taskMode?: TaskMode;
+  taskDescription?: string | null;
   initialMessage?: string;
   initialSettings?: AgentRunSettings;
   emptyMessage?: string;
@@ -458,6 +459,7 @@ export function TaskChat({
   taskId,
   taskStatus,
   taskMode = 'direct',
+  taskDescription,
   initialMessage,
   initialSettings,
   emptyMessage = 'Start a conversation with your assistant.',
@@ -510,6 +512,22 @@ export function TaskChat({
   const sendDisabled = isInactiveTask
     ? runtimeControlsDisabled || !normalizedPendingWorkspacePath || runtimeNeedsSetup || planUnsupported
     : runtimeControlsDisabled || isStreaming;
+  const taskDescriptionAttachments = useMemo(
+    () => taskDescription ? displayMessageAttachments(parseMessageAttachments(taskDescription)) : [],
+    [taskDescription],
+  );
+  const taskDescriptionAttachmentKeys = useMemo(
+    () => new Set(taskDescriptionAttachments.map((attachment) => attachment.path)),
+    [taskDescriptionAttachments],
+  );
+  const showTaskDescriptionBubble = Boolean(
+    taskDescription
+    && taskDescriptionAttachments.length > 0
+    && !messages.some((message) => (
+      message.role === 'user'
+      && parseMessageAttachments(message.content).some((attachment) => taskDescriptionAttachmentKeys.has(attachment.path))
+    )),
+  );
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const didInitialScrollRef = useRef(false);
@@ -681,15 +699,28 @@ export function TaskChat({
           className="h-full overflow-y-auto px-4 sm:px-6 py-4"
         >
           <div className={`${CHAT_COLUMN_CLASS} space-y-3`}>
-            {messages.length === 0 && messagesLoadError && (
+            {messages.length === 0 && !showTaskDescriptionBubble && messagesLoadError && (
               <p className="text-sm text-red-400 dark:text-red-500 text-center py-12">{messagesLoadError}</p>
             )}
-            {messages.length === 0 && !messagesLoadError && (
+            {messages.length === 0 && !showTaskDescriptionBubble && !messagesLoadError && (
               <p className="text-sm text-zinc-400 dark:text-zinc-500 text-center py-12">
                 {isInactiveTask
                   ? 'Choose the folder and AI settings below, then start this task.'
                   : emptyMessage}
               </p>
+            )}
+            {showTaskDescriptionBubble && taskDescription && (
+              <div className="flex justify-end">
+                <div className="max-w-[85%] rounded-2xl bg-zinc-100 px-4 py-2.5 text-sm leading-relaxed text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">
+                  {displayMessageContent(taskDescription) && (
+                    <div className="whitespace-pre-wrap">{displayMessageContent(taskDescription)}</div>
+                  )}
+                  <MessageAttachmentList
+                    attachments={taskDescriptionAttachments}
+                    onOpenImage={setSelectedAttachment}
+                  />
+                </div>
+              </div>
             )}
             {messages.map((msg, idx) => {
               if (msg.role === 'user') {
