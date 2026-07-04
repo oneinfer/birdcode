@@ -37,7 +37,7 @@ export function Column({
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const navigate = useNavigate();
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
-  const showAddButton = status === 'pending' || status === 'in_progress';
+  const showAddButton = status === 'assigned' || status === 'pending' || status === 'in_progress';
   const createTaskPath = `/tasks/new?status=${status}`;
   const showFlushButton = status === 'pending';
   const showPullRequestButton = status === 'in_review';
