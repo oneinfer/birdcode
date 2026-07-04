@@ -176,10 +176,30 @@ export function startTask(
     reasoningEffort?: ReasoningEffort | null;
     taskMode?: TaskMode;
   },
+  message?: string,
+  attachments?: File[],
 ) {
+  if (attachments?.length) {
+    const formData = new FormData();
+    formData.append('workspacePath', settings.workspacePath);
+    appendOptionalFormValue(formData, 'runtime', settings.runtime);
+    appendOptionalFormValue(formData, 'model', settings.model);
+    appendOptionalFormValue(formData, 'reasoningEffort', settings.reasoningEffort);
+    appendOptionalFormValue(formData, 'taskMode', settings.taskMode);
+    appendOptionalFormValue(formData, 'message', message);
+    for (const attachment of attachments) {
+      formData.append('attachments', attachment, attachment.name);
+    }
+
+    return request<{ task: Task }>(`/tasks/${id}/start`, {
+      method: 'POST',
+      body: formData,
+    });
+  }
+
   return request<{ task: Task }>(`/tasks/${id}/start`, {
     method: 'POST',
-    body: JSON.stringify(settings),
+    body: JSON.stringify({ ...settings, message }),
   });
 }
 

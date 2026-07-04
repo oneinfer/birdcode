@@ -207,6 +207,20 @@ async function enterpriseCreateBody(
   });
 }
 
+function startMessageFromBody(body: Record<string, unknown>): string {
+  const value = body.message ?? body.additionalContext ?? body.additional_context;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function appendStartContext(description: string | null, title: string, message: string): string {
+  const base = (description?.trim() || title.trim()).trim();
+  if (!message) return base;
+  return `${base}
+
+Additional context provided before starting:
+${message}`;
+}
+
 tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
   const files = uploadedAttachments(req);
   const { description, title } = req.body;
@@ -346,12 +360,15 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
   res.status(201).json({ task });
 });
 
-tasksRouter.post('/:id/start', async (req, res) => {
+tasksRouter.post('/:id/start', attachmentUploadMiddleware, async (req, res) => {
+  const taskId = String(req.params.id);
+  const files = uploadedAttachments(req);
   // Parse start settings first (needed for both enterprise and local paths)
   let workspacePath: string | null | undefined;
   let runtime: ReturnType<typeof parseRuntimeValue>;
   let runSettings: ReturnType<typeof parseRunSettingsBody>;
   let taskMode: TaskMode;
+  const startMessage = startMessageFromBody(req.body as Record<string, unknown>);
   try {
     workspacePath = parseWorkspacePath(req.body);
     if (!workspacePath) throw new Error('workspacePath is required');
@@ -359,11 +376,13 @@ tasksRouter.post('/:id/start', async (req, res) => {
     runSettings = parseRunSettingsBody(req.body);
     taskMode = parseTaskMode(req.body.taskMode ?? req.body.task_mode);
   } catch (error) {
+    await cleanupUploadedAttachments(files);
     return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid start settings' });
   }
 
   const resolvedRuntime = runtime ?? runSettings.taskFields.agent_runtime ?? defaultRuntime();
   if (taskMode === 'plan' && !runtimeSupportsGoals(resolvedRuntime)) {
+    await cleanupUploadedAttachments(files);
     return res.status(400).json({ error: `Goal feature is not available for ${runtimeLabel(resolvedRuntime)}.` });
   }
 
@@ -373,26 +392,32 @@ tasksRouter.post('/:id/start', async (req, res) => {
     let enterpriseTask: Record<string, unknown>;
     try {
       enterpriseTask = await enterpriseJson<Record<string, unknown>>(
-        req, `/organization/${orgId}/tasks/${encodeURIComponent(req.params.id)}`
+        req, `/organization/${orgId}/tasks/${encodeURIComponent(taskId)}`
       );
     } catch (error) {
+      await cleanupUploadedAttachments(files);
       return res.status((error as { status?: number }).status ?? 404).json({ error: 'Task not found' });
     }
 
     let current = taskFromEnterprise(enterpriseTask);
     if (current.status !== 'pending' && current.status !== 'assigned') {
+      await cleanupUploadedAttachments(files);
       return res.status(409).json({ error: 'Only pending or assigned tasks can be started', code: 'task_not_inactive' });
     }
 
     // Update enterprise task: status + non-local agent settings
     try {
+      let description = appendStartContext(current.description, current.title, startMessage);
+      const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(current.id, files));
+      description = appendAttachmentContext(description, attachments);
       const patched = await enterpriseJson<Record<string, unknown>>(
         req,
-        `/organization/${orgId}/tasks/${encodeURIComponent(req.params.id)}`,
+        `/organization/${orgId}/tasks/${encodeURIComponent(taskId)}`,
         {
           method: 'PATCH',
           body: JSON.stringify({
             status: 'in_progress',
+            description,
             agent_runtime: resolvedRuntime,
             agent_model: runSettings.taskFields.agent_model ?? null,
             reasoning_effort: runSettings.taskFields.reasoning_effort ?? null,
@@ -402,9 +427,13 @@ tasksRouter.post('/:id/start', async (req, res) => {
       );
       current = taskFromEnterprise(patched);
     } catch (error) {
+      await deleteTaskAttachments(taskId).catch(() => undefined);
+      await cleanupUploadedAttachments(files);
       return res.status((error as { status?: number }).status ?? 502).json({
         error: toErrorMessage(error, 'Failed to update task on enterprise OpenBees'),
       });
+    } finally {
+      await cleanupUploadedAttachments(files);
     }
 
     // Apply workspace_path locally (enterprise never stores this) and start agent
@@ -432,19 +461,40 @@ tasksRouter.post('/:id/start', async (req, res) => {
   try {
     organizationContext = await loadOrganizationAccess(req);
   } catch (error) {
+    await cleanupUploadedAttachments(files);
     return res.status(403).json({ error: toErrorMessage(error, 'Organization access denied') });
   }
 
-  const visible = requireTaskVisible(getTask(req.params.id), organizationContext);
-  if (!visible) return res.status(404).json({ error: 'Task not found' });
+  const visible = requireTaskVisible(getTask(taskId), organizationContext);
+  if (!visible) {
+    await cleanupUploadedAttachments(files);
+    return res.status(404).json({ error: 'Task not found' });
+  }
   const current = requireTaskStartable(visible, organizationContext);
-  if (!current) return res.status(403).json({ error: 'You do not have permission to start this task' });
+  if (!current) {
+    await cleanupUploadedAttachments(files);
+    return res.status(403).json({ error: 'You do not have permission to start this task' });
+  }
   if (current.status !== 'pending' && current.status !== 'assigned') {
+    await cleanupUploadedAttachments(files);
     return res.status(409).json({ error: 'Only pending or assigned tasks can be started', code: 'task_not_inactive' });
+  }
+
+  let description = appendStartContext(current.description, current.title, startMessage);
+  try {
+    const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(current.id, files));
+    description = appendAttachmentContext(description, attachments);
+  } catch (error) {
+    await deleteTaskAttachments(current.id).catch(() => undefined);
+    await cleanupUploadedAttachments(files);
+    return res.status(400).json({ error: toErrorMessage(error, 'Failed to save attachments') });
+  } finally {
+    await cleanupUploadedAttachments(files);
   }
 
   const updated = updateTask(current.id, {
     status: 'in_progress',
+    description,
     task_mode: taskMode,
     workspace_path: workspacePath,
     agent_runtime: resolvedRuntime,

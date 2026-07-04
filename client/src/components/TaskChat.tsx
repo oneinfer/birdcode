@@ -502,7 +502,7 @@ export function TaskChat({
   const toolbarDefaults = waitingForTaskSettings ? null : defaults;
   const configPending = waitingForTaskSettings || (!defaults && isLoading);
   const isInactiveTask = taskStatus === 'pending' || taskStatus === 'assigned';
-  const messageControlsDisabled = isInactiveTask || configPending;
+  const messageControlsDisabled = configPending || isStartingTask;
   const runtimeControlsDisabled = configPending || isStartingTask;
   const normalizedPendingWorkspacePath = pendingWorkspacePath.trim();
   const effectiveRuntime = runtime ?? defaults?.runtime ?? 'hermes';
@@ -600,6 +600,8 @@ export function TaskChat({
     setIsStartingTask(true);
     setStartError(null);
     try {
+      const text = input.trim();
+      const files = attachments.map((attachment) => attachment.file);
       const settings = {
         workspacePath: normalizedPendingWorkspacePath,
         runtime: effectiveRuntime,
@@ -607,9 +609,14 @@ export function TaskChat({
         reasoningEffort,
         taskMode: pendingTaskMode,
       };
-      const result = await startTask(taskId, settings);
+      const result = await startTask(taskId, settings, text || undefined, files);
       writeSavedStartSettings(settings);
       upsertTask(result.task);
+      setInput('');
+      setAttachments([]);
+      for (const attachment of attachments) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
       setCurrentProjectPath(normalizedPendingWorkspacePath);
       void updateCurrentProject(normalizedPendingWorkspacePath)
         .then((current) => {
@@ -623,6 +630,8 @@ export function TaskChat({
     }
   }, [
     effectiveRuntime,
+    attachments,
+    input,
     isInactiveTask,
     model,
     normalizedPendingWorkspacePath,
@@ -827,9 +836,9 @@ export function TaskChat({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={isInactiveTask ? 'Choose the folder and AI settings below, then start this task.' : inputPlaceholder}
+            placeholder={isInactiveTask ? 'Add planning context, requirements, screenshots, or notes before starting...' : inputPlaceholder}
             rows={2}
-            disabled={isInactiveTask}
+            disabled={messageControlsDisabled}
             className="w-full resize-none bg-transparent px-5 pt-3 pb-1 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none leading-relaxed"
           />
           <div className="flex items-center justify-between px-4 pb-3">
