@@ -80,6 +80,12 @@ export async function enterpriseJson<T>(
     const error = new Error(message) as Error & { status?: number; body?: unknown };
     error.status = response.status;
     error.body = body;
+    console.warn('[enterprise] request failed', {
+      method: init.method ?? 'GET',
+      path,
+      status: response.status,
+      body,
+    });
     throw error;
   }
   return body as T;

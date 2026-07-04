@@ -404,14 +404,17 @@ tasksRouter.post('/:id/start', attachmentUploadMiddleware, async (req, res) => {
 
     // Start enterprise task and persist shared start-context attachments there.
     try {
-      const body = await formDataFromRequestBody({
+      const startPayload = {
         workspace_path: workspacePath,
         agent_runtime: resolvedRuntime,
         agent_model: runSettings.taskFields.agent_model ?? null,
         reasoning_effort: runSettings.taskFields.reasoning_effort ?? null,
         task_mode: taskMode,
         message: startMessage,
-      }, files);
+      };
+      const body = files.length > 0
+        ? await formDataFromRequestBody(startPayload, files)
+        : JSON.stringify(startPayload);
       const started = await enterpriseJson<Record<string, unknown>>(
         req,
         `/organization/${orgId}/tasks/${encodeURIComponent(taskId)}/start`,
