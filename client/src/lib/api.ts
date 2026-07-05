@@ -35,6 +35,7 @@ import { getSelectedOrganizationId } from './organization-selection';
 import { prepareAttachmentsForUpload } from './image-compression';
 
 export type { AgentRunSettings };
+export type { AsrStatusResponse };
 
 export const BASE = '/api';
 
@@ -276,12 +277,27 @@ export interface TtsStatusResponse {
   error?: string;
 }
 
+export interface AudioAssistantRuntimeStatusResponse {
+  installed: boolean;
+  asr: AsrStatusResponse;
+  tts: TtsStatusResponse;
+  output?: string;
+}
+
 export function fetchAsrStatus() {
   return request<AsrStatusResponse>('/asr/status');
 }
 
 export function fetchTtsStatus() {
   return request<TtsStatusResponse>('/tts/status');
+}
+
+export function fetchAudioAssistantRuntimeStatus() {
+  return request<AudioAssistantRuntimeStatusResponse>('/voice-assistant/runtime/status');
+}
+
+export function installAudioAssistantRuntime() {
+  return request<AudioAssistantRuntimeStatusResponse>('/voice-assistant/runtime/install', { method: 'POST' });
 }
 
 export interface ActivityDaemonStatusResponse {

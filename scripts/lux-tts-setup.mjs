@@ -149,7 +149,7 @@ export function ensureLuxTtsEnvironment(options = {}) {
     LUX_TTS_T_SHIFT: cfg('LUX_TTS_T_SHIFT') || '0.5', LUX_TTS_SPEED: cfg('LUX_TTS_SPEED') || '1.0', LUX_TTS_RUN_LIMIT: cfg('LUX_TTS_RUN_LIMIT') || '1',
     LUX_TTS_SEGMENT_MAX_CHARS: cfg('LUX_TTS_SEGMENT_MAX_CHARS') || '420', LUX_TTS_SEGMENT_FLUSH_MS: cfg('LUX_TTS_SEGMENT_FLUSH_MS') || '900',
     LUX_TTS_QUEUE_MAX_SEGMENTS: cfg('LUX_TTS_QUEUE_MAX_SEGMENTS') || '12', LUX_TTS_SEGMENT_TIMEOUT_MS: cfg('LUX_TTS_SEGMENT_TIMEOUT_MS') || '30000',
-    LUX_TTS_PRELOAD: cfg('LUX_TTS_PRELOAD') || 'true',
+    LUX_TTS_PRELOAD: cfg('LUX_TTS_PRELOAD') || 'false',
   };
   const example = {
     ...values,

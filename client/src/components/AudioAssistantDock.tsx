@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, ChevronDown, Loader2, Mic, MicOff, Volume2, VolumeX, X } from 'lucide-react';
-import { apiAuthHeaders, BASE, fetchTtsStatus, liveTaskChatUrl, liveTaskTtsUrl, startActivityAssistant, stopActivityAssistant, transcribeAudio, type TtsStatusResponse } from '../lib/api';
+import { Bot, ChevronDown, Download, Loader2, Mic, MicOff, Volume2, VolumeX, X } from 'lucide-react';
+import {
+  apiAuthHeaders,
+  BASE,
+  fetchAudioAssistantRuntimeStatus,
+  installAudioAssistantRuntime,
+  liveTaskChatUrl,
+  liveTaskTtsUrl,
+  startActivityAssistant,
+  stopActivityAssistant,
+  transcribeAudio,
+  type AsrStatusResponse,
+  type TtsStatusResponse,
+} from '../lib/api';
 import { toErrorMessage } from '../lib/format';
 import { useStore } from '../lib/store';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { AudioQueue, BrowserSpeechQueue } from '../lib/audioPlayback';
 
 const ASSISTANT_TASK_KEY = 'bees:audioAssistantTaskId';
-const ASSISTANT_ENABLED_KEY = 'bees:audioAssistantEnabled';
 
 type TtsEvent =
   | { type: 'ready'; enabled?: boolean; available?: boolean; error?: string }
@@ -21,14 +32,6 @@ type ChatLiveEvent =
   | { type: 'text_delta'; content?: string }
   | { type: 'done' }
   | { type: 'error'; error?: string };
-
-function readStoredBoolean(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === 'true';
-  } catch {
-    return false;
-  }
-}
 
 function readCookie(name: string): string | null {
   const prefix = `${name}=`;
@@ -47,8 +50,8 @@ export function AudioAssistantDock() {
       .sort((a, b) => b.updated_at - a.updated_at),
     [tasks],
   );
-  const [expanded, setExpanded] = useState(() => readStoredBoolean(ASSISTANT_ENABLED_KEY));
-  const [audioEnabled, setAudioEnabled] = useState(() => readStoredBoolean(ASSISTANT_ENABLED_KEY));
+  const [expanded, setExpanded] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(() => {
     try {
       return localStorage.getItem(ASSISTANT_TASK_KEY) ?? '';
@@ -57,10 +60,12 @@ export function AudioAssistantDock() {
     }
   });
   const [ttsStatus, setTtsStatus] = useState<TtsStatusResponse | null>(null);
+  const [asrStatus, setAsrStatus] = useState<AsrStatusResponse | null>(null);
   const [status, setStatus] = useState('Audio assistant idle');
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [daemonPending, setDaemonPending] = useState(false);
+  const [runtimeInstalling, setRuntimeInstalling] = useState(false);
   const ttsSourceRef = useRef<EventSource | null>(null);
   const chatSpeechSourceRef = useRef<EventSource | null>(null);
   const audioQueueRef = useRef(new AudioQueue());
@@ -78,12 +83,11 @@ export function AudioAssistantDock() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(ASSISTANT_ENABLED_KEY, String(audioEnabled));
       if (effectiveTaskId) localStorage.setItem(ASSISTANT_TASK_KEY, effectiveTaskId);
     } catch {
       // Local persistence is convenience only.
     }
-  }, [audioEnabled, effectiveTaskId]);
+  }, [effectiveTaskId]);
 
   const setAudioAssistantEnabled = useCallback((next: boolean) => {
     setAudioEnabled(next);
@@ -98,19 +102,12 @@ export function AudioAssistantDock() {
   }, []);
 
   useEffect(() => {
-    if (!audioEnabled) return;
-    startActivityAssistant().catch((err) => {
-      setError(toErrorMessage(err, 'Failed to start audio assistant'));
-    });
-    // Sync the activity daemon to the persisted toggle state once on mount only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
-    fetchTtsStatus()
+    fetchAudioAssistantRuntimeStatus()
       .then((nextStatus) => {
-        if (!cancelled) setTtsStatus(nextStatus);
+        if (cancelled) return;
+        setAsrStatus(nextStatus.asr);
+        setTtsStatus(nextStatus.tts);
       })
       .catch((err) => {
         if (!cancelled) setError(toErrorMessage(err, 'Audio output is unavailable'));
@@ -156,11 +153,36 @@ export function AudioAssistantDock() {
     };
   }, [audioEnabled, effectiveTaskId]);
 
+  const inputReady = !!asrStatus?.enabled && !!asrStatus.available;
   const outputReady = !!ttsStatus?.enabled && !!ttsStatus.available;
   const browserSpeechReady = browserSpeechRef.current.available();
   const audioOutputReady = outputReady || browserSpeechReady;
-  const canRecord = audioEnabled && !!effectiveTaskId && !isSending && audioOutputReady;
+  const canRecord = audioEnabled && !!effectiveTaskId && !isSending && inputReady && audioOutputReady;
   const compactTitle = audioEnabled ? 'Audio assistant' : 'Enable audio assistant';
+  const needsRuntimeInstall = !inputReady || !ttsStatus?.enabled;
+
+  const installRuntime = useCallback(async () => {
+    if (runtimeInstalling) return;
+    setRuntimeInstalling(true);
+    setError(null);
+    setStatus('Installing speech dependencies');
+    try {
+      const nextStatus = await installAudioAssistantRuntime();
+      setAsrStatus(nextStatus.asr);
+      setTtsStatus(nextStatus.tts);
+      setStatus(nextStatus.asr.available ? 'Audio assistant ready' : 'Speech input unavailable');
+    } catch (err) {
+      setError(toErrorMessage(err, 'Failed to install speech dependencies'));
+      await fetchAudioAssistantRuntimeStatus()
+        .then((nextStatus) => {
+          setAsrStatus(nextStatus.asr);
+          setTtsStatus(nextStatus.tts);
+        })
+        .catch(() => undefined);
+    } finally {
+      setRuntimeInstalling(false);
+    }
+  }, [runtimeInstalling]);
 
   useEffect(() => {
     chatSpeechSourceRef.current?.close();
@@ -313,7 +335,7 @@ export function AudioAssistantDock() {
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
-            disabled={daemonPending}
+            disabled={daemonPending || runtimeInstalling}
             onClick={() => setAudioAssistantEnabled(!audioEnabled)}
             aria-pressed={audioEnabled}
             className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
@@ -351,6 +373,24 @@ export function AudioAssistantDock() {
           </button>
         </div>
 
+        {needsRuntimeInstall && (
+          <button
+            type="button"
+            disabled={runtimeInstalling}
+            onClick={() => void installRuntime()}
+            title="Install speech dependencies"
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            {runtimeInstalling ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            <span>{runtimeInstalling ? 'Installing speech dependencies' : 'Install speech dependencies'}</span>
+          </button>
+        )}
+
+        {!inputReady && audioEnabled && (
+          <p className="text-xs text-amber-600 dark:text-amber-300">
+            {asrStatus?.error || 'Speech input dependencies are not installed.'}
+          </p>
+        )}
         {!outputReady && audioEnabled && !browserSpeechReady && (
           <p className="text-xs text-amber-600 dark:text-amber-300">
             {ttsStatus?.error || 'Audio output is not available.'}

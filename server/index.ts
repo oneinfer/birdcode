@@ -31,8 +31,9 @@ async function main() {
 
   const url = `http://localhost:${PORT}`;
   const startupUrl = `${url}/tasks/new`;
+  const preloadAudioAssistant = process.env.BEES_AUDIO_ASSISTANT_PRELOAD?.trim().toLowerCase() === 'true';
 
-  if (graniteAsr.enabled() && (process.env.GRANITE_ASR_PRELOAD ?? process.env.QWEN_ASR_PRELOAD)?.trim().toLowerCase() === 'true') {
+  if (preloadAudioAssistant && graniteAsr.enabled()) {
     console.log('Loading Granite ASR model...');
     void graniteAsr.preload()
       .then(() => {
@@ -48,7 +49,7 @@ async function main() {
     .then(() => { console.log('Agent worker pre-warmed.'); })
     .catch(() => {});
 
-  if (liveTts.enabled() && (process.env.LUX_TTS_PRELOAD ?? 'true').trim().toLowerCase() === 'true') {
+  if (preloadAudioAssistant && liveTts.enabled()) {
     console.log('Loading LuxTTS model...');
     await liveTts.preload()
       .then(() => {
