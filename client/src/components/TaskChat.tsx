@@ -13,9 +13,10 @@ import { MarkdownContent } from './MarkdownContent';
 import { useChat, ToolProgressEvent } from '../hooks/useChat';
 import { useAgentConfig } from '../hooks/useAgentConfig';
 import { handleChatKeyDown } from '../lib/keyboard';
-import { BASE, fileViewUrl, pickWorkspaceDirectory, startTask, updateCurrentProject } from '../lib/api';
+import { BASE, fileViewUrl, patchTask, pickWorkspaceDirectory, startTask, updateCurrentProject } from '../lib/api';
 import { useStore } from '../lib/store';
 import { toErrorMessage } from '../lib/format';
+import { readSavedStartSettings, writeSavedStartSettings } from '../lib/startTaskSettings';
 import type { AgentRunSettings } from '../lib/api';
 import type { AgentRuntime, ChatAttachment, LiveChatTimelineItem, ReasoningEffort, TaskMode, TaskStatus } from '@shared/types';
 
@@ -29,33 +30,7 @@ interface TaskChatProps {
   emptyMessage?: string;
   inputPlaceholder?: string;
   workspacePath?: string | null;
-}
-
-interface SavedStartSettings {
-  workspacePath?: string | null;
-  runtime?: AgentRuntime | null;
-  model?: string | null;
-  reasoningEffort?: ReasoningEffort | null;
-  taskMode?: TaskMode;
-}
-
-const START_SETTINGS_STORAGE_KEY = 'bees:startTaskSettings';
-
-function readSavedStartSettings(): SavedStartSettings {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(START_SETTINGS_STORAGE_KEY) ?? '{}') as SavedStartSettings;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeSavedStartSettings(settings: SavedStartSettings) {
-  try {
-    localStorage.setItem(START_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Best-effort convenience only.
-  }
+  onAgentSettingsChange?: (settings: { runtime: AgentRuntime | null; model: string | null }) => void;
 }
 
 function ThinkingBlock({ content, isLive }: { content: string; isLive: boolean }) {
@@ -314,18 +289,18 @@ function ProcessDetails({ tool }: { tool: ToolProgressEvent }) {
 
   return (
     <div className="border-t border-zinc-200 px-4 py-3 text-xs dark:border-zinc-800">
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         {command && (
-          <div>
+          <div className="min-w-0">
             <div className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">Command</div>
-            <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-100 p-2 font-mono text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">{command}</pre>
+            <pre className="max-h-40 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-100 p-2 font-mono text-zinc-700 [overflow-wrap:anywhere] dark:bg-zinc-950 dark:text-zinc-300">{command}</pre>
           </div>
         )}
         <div className="grid gap-2 sm:grid-cols-2">
           {cwd && (
             <div className="min-w-0">
               <div className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">Working directory</div>
-              <div className="truncate rounded-md bg-zinc-100 p-2 font-mono text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300" title={cwd}>{cwd}</div>
+              <pre className="max-h-24 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-100 p-2 font-mono text-zinc-700 [overflow-wrap:anywhere] dark:bg-zinc-950 dark:text-zinc-300" title={cwd}>{cwd}</pre>
             </div>
           )}
           <div className="min-w-0">
@@ -337,26 +312,36 @@ function ProcessDetails({ tool }: { tool: ToolProgressEvent }) {
         </div>
         {(promptFile || contextFile) && (
           <div className="grid gap-2 sm:grid-cols-2">
-            {promptFile && <div className="truncate rounded-md bg-zinc-100 p-2 font-mono text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400" title={promptFile}>Prompt: {promptFile}</div>}
-            {contextFile && <div className="truncate rounded-md bg-zinc-100 p-2 font-mono text-zinc-500 dark:bg-zinc-950 dark:text-zinc-400" title={contextFile}>Context: {contextFile}</div>}
+            {promptFile && (
+              <div className="min-w-0">
+                <div className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">Prompt</div>
+                <pre className="max-h-24 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-100 p-2 font-mono text-zinc-500 [overflow-wrap:anywhere] dark:bg-zinc-950 dark:text-zinc-400" title={promptFile}>{promptFile}</pre>
+              </div>
+            )}
+            {contextFile && (
+              <div className="min-w-0">
+                <div className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">Context</div>
+                <pre className="max-h-24 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-100 p-2 font-mono text-zinc-500 [overflow-wrap:anywhere] dark:bg-zinc-950 dark:text-zinc-400" title={contextFile}>{contextFile}</pre>
+              </div>
+            )}
           </div>
         )}
         {args.length > 0 && (
           <details className="rounded-md border border-zinc-200 p-2 dark:border-zinc-800">
             <summary className="cursor-pointer text-zinc-500 dark:text-zinc-400">Arguments</summary>
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-zinc-700 dark:text-zinc-300">{args.join('\n')}</pre>
+            <pre className="mt-2 max-h-48 max-w-full overflow-auto whitespace-pre-wrap break-words font-mono text-zinc-700 [overflow-wrap:anywhere] dark:text-zinc-300">{args.join('\n')}</pre>
           </details>
         )}
         {stdoutTail && (
-          <div>
+          <div className="min-w-0">
             <div className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">stdout</div>
-            <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-2 font-mono text-zinc-100">{stdoutTail}</pre>
+            <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-2 font-mono text-zinc-100 [overflow-wrap:anywhere]">{stdoutTail}</pre>
           </div>
         )}
         {stderrTail && (
-          <div>
+          <div className="min-w-0">
             <div className="mb-1 font-medium text-zinc-500 dark:text-zinc-400">stderr</div>
-            <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-2 font-mono text-red-200">{stderrTail}</pre>
+            <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-950 p-2 font-mono text-red-200 [overflow-wrap:anywhere]">{stderrTail}</pre>
           </div>
         )}
       </div>
@@ -489,6 +474,7 @@ export function TaskChat({
   emptyMessage = 'Start a conversation with your assistant.',
   inputPlaceholder = 'Message your assistant...',
   workspacePath,
+  onAgentSettingsChange,
 }: TaskChatProps) {
   const savedStartSettings = useMemo(readSavedStartSettings, [taskId]);
   const { messages, isStreaming, thinkingContent, activeTools, context, sendMessage, loadMessages } = useChat();
@@ -507,6 +493,7 @@ export function TaskChat({
     workspacePath ?? savedStartSettings.workspacePath ?? currentProjectPath ?? localStorage.getItem('bees:lastWorkspacePath') ?? '',
   );
   const [pendingTaskMode, setPendingTaskMode] = useState<TaskMode>(taskMode ?? savedStartSettings.taskMode ?? 'direct');
+  const [activeWorkspacePath, setActiveWorkspacePath] = useState(workspacePath ?? '');
   const [isPickingWorkspace, setIsPickingWorkspace] = useState(false);
   const [isStartingTask, setIsStartingTask] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -529,6 +516,8 @@ export function TaskChat({
   const messageControlsDisabled = configPending || isStartingTask;
   const runtimeControlsDisabled = configPending || isStartingTask;
   const normalizedPendingWorkspacePath = pendingWorkspacePath.trim();
+  const normalizedActiveWorkspacePath = activeWorkspacePath.trim();
+  const displayWorkspacePath = isInactiveTask ? normalizedPendingWorkspacePath : normalizedActiveWorkspacePath;
   const effectiveRuntime = runtime ?? defaults?.runtime ?? 'hermes';
   const runtimeMeta = runtimeOptions.find((option) => option.id === effectiveRuntime);
   const runtimeNeedsSetup = runtimeMeta?.status === 'configure';
@@ -536,6 +525,13 @@ export function TaskChat({
   const sendDisabled = isInactiveTask
     ? runtimeControlsDisabled || !normalizedPendingWorkspacePath || runtimeNeedsSetup || planUnsupported
     : runtimeControlsDisabled || isStreaming;
+  const onAgentSettingsChangeRef = useRef(onAgentSettingsChange);
+  onAgentSettingsChangeRef.current = onAgentSettingsChange;
+  const displayModel = model ?? runtimeDefaultModel ?? defaults?.model ?? null;
+  useEffect(() => {
+    if (configPending) return;
+    onAgentSettingsChangeRef.current?.({ runtime: effectiveRuntime, model: displayModel });
+  }, [configPending, effectiveRuntime, displayModel]);
   const taskDescriptionAttachments = useMemo(
     () => taskDescription ? displayMessageAttachments(parseMessageAttachments(taskDescription)) : [],
     [taskDescription],
@@ -589,6 +585,7 @@ export function TaskChat({
     setPendingWorkspacePath(
       workspacePath ?? savedStartSettings.workspacePath ?? currentProjectPath ?? localStorage.getItem('bees:lastWorkspacePath') ?? '',
     );
+    setActiveWorkspacePath(workspacePath ?? '');
     setPendingTaskMode(taskMode ?? savedStartSettings.taskMode ?? 'direct');
     setStartError(null);
   }, [currentProjectPath, savedStartSettings, taskId, taskMode, workspacePath]);
@@ -609,14 +606,44 @@ export function TaskChat({
     setStartError(null);
 
     try {
-      const result = await pickWorkspaceDirectory(normalizedPendingWorkspacePath || null);
-      if (result.path) setPendingWorkspacePath(result.path);
+      const initialPath = isInactiveTask
+        ? normalizedPendingWorkspacePath || null
+        : normalizedActiveWorkspacePath || currentProjectPath || localStorage.getItem('bees:lastWorkspacePath') || null;
+      const result = await pickWorkspaceDirectory(initialPath);
+      if (!result.path) return;
+
+      if (isInactiveTask) {
+        setPendingWorkspacePath(result.path);
+        return;
+      }
+
+      setActiveWorkspacePath(result.path);
+      const updated = await patchTask(taskId, { workspacePath: result.path });
+      upsertTask(updated.task);
+      setCurrentProjectPath(result.path);
+      localStorage.setItem('bees:lastWorkspacePath', result.path);
+      void updateCurrentProject(result.path)
+        .then((current) => {
+          if (current.project) upsertProject(current.project);
+        })
+        .catch(() => undefined);
     } catch (error) {
       setStartError(toErrorMessage(error, 'Failed to choose project folder'));
     } finally {
       setIsPickingWorkspace(false);
     }
-  }, [isPickingWorkspace, isStartingTask, normalizedPendingWorkspacePath]);
+  }, [
+    currentProjectPath,
+    isInactiveTask,
+    isPickingWorkspace,
+    isStartingTask,
+    normalizedActiveWorkspacePath,
+    normalizedPendingWorkspacePath,
+    setCurrentProjectPath,
+    taskId,
+    upsertProject,
+    upsertTask,
+  ]);
 
   const handleStartTask = useCallback(async () => {
     if (!isInactiveTask || sendDisabled) return;
@@ -827,26 +854,28 @@ export function TaskChat({
 
       <div className="px-4 sm:px-6 py-4 border-t border-zinc-100 dark:border-zinc-800">
         <div className="w-full max-w-[800px] mx-auto rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
-          {isInactiveTask && normalizedPendingWorkspacePath && (
+          {displayWorkspacePath && (
             <div className="flex items-start justify-between gap-3 border-b border-zinc-100 bg-zinc-50/70 px-5 py-3 dark:border-zinc-700/70 dark:bg-zinc-900/40">
               <div className="min-w-0">
                 <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                   Working directory
                 </p>
-                <p className="mt-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-200" title={normalizedPendingWorkspacePath}>
-                  {normalizedPendingWorkspacePath}
+                <p className="mt-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-200" title={displayWorkspacePath}>
+                  {displayWorkspacePath}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setPendingWorkspacePath('')}
-                disabled={runtimeControlsDisabled || isPickingWorkspace}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700/70 dark:hover:text-zinc-200"
-                aria-label="Clear working directory"
-                title="Clear working directory"
-              >
-                <X size={14} />
-              </button>
+              {isInactiveTask && (
+                <button
+                  type="button"
+                  onClick={() => setPendingWorkspacePath('')}
+                  disabled={runtimeControlsDisabled || isPickingWorkspace}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700/70 dark:hover:text-zinc-200"
+                  aria-label="Clear working directory"
+                  title="Clear working directory"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
           )}
           <AttachmentPreviewList
@@ -907,19 +936,17 @@ export function TaskChat({
                 onModelChange={setModel}
                 onReasoningEffortChange={setReasoningEffort}
               />
-              {isInactiveTask && (
-                <button
-                  type="button"
-                  onClick={handleChooseWorkspace}
-                  disabled={runtimeControlsDisabled || isPickingWorkspace}
-                  className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 shadow-sm transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700/70"
-                  aria-label="Choose working directory"
-                  title="Choose working directory"
-                >
-                  {isPickingWorkspace ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
-                  <span>Choose Folder</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleChooseWorkspace}
+                disabled={runtimeControlsDisabled || isPickingWorkspace || isStreaming}
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 shadow-sm transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700/70"
+                aria-label="Choose working directory"
+                title="Choose working directory"
+              >
+                {isPickingWorkspace ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
+                <span>Choose Folder</span>
+              </button>
             </div>
             <div className="flex items-center gap-2">
               {context && <ContextRing context={context} />}
@@ -967,7 +994,7 @@ export function TaskChat({
         <aside className="hidden min-h-0 min-w-[420px] flex-1 xl:block">
           <ArtifactViewer
             artifact={selectedArtifact}
-            workspacePath={workspacePath}
+            workspacePath={normalizedActiveWorkspacePath || workspacePath}
             onClose={() => setSelectedArtifact(null)}
           />
         </aside>

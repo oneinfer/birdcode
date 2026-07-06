@@ -8,43 +8,87 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Task, TaskStatus } from '@shared/types';
 import { TASK_STATUSES } from '@shared/types';
 import { STATUS_META } from '../lib/constants';
 import { useStore, optimisticMoveTask } from '../lib/store';
-import { createTask, deleteTask, moveTask } from '../lib/api';
+import { createTask, deleteTask, moveTask, startTask, updateCurrentProject } from '../lib/api';
 import { toErrorMessage } from '../lib/format';
 import { isBoardTask, taskStatusesForScope } from '../lib/taskState';
 import { useOrganizations } from '../auth/OrganizationContext';
-import { primeTaskCreatedNotifications } from '../lib/taskNotification';
+import { primeTaskCreatedNotifications, announceTaskStarted } from '../lib/taskNotification';
+import { readSavedStartSettings, writeSavedStartSettings } from '../lib/startTaskSettings';
 import { Column } from './Column';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { StartTaskDialog } from './StartTaskDialog';
 import { TaskCardOverlay } from './TaskCard';
+import { useAuth } from '../auth/AuthContext';
 
 const dropAnimation = {
   duration: 200,
   easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
 };
+
+type TaskFilter = 'all' | 'created_by_me' | 'assigned_to_me' | 'team' | 'unassigned';
+
 export function Board() {
   const navigate = useNavigate();
   const tasks = useStore((s) => s.tasks);
   const streamingTaskIds = useStore((s) => s.streamingTaskIds);
   const upsertTask = useStore((s) => s.upsertTask);
   const removeTask = useStore((s) => s.removeTask);
+  const currentProjectPath = useStore((s) => s.currentProjectPath);
+  const setCurrentProjectPath = useStore((s) => s.setCurrentProjectPath);
+  const upsertProject = useStore((s) => s.upsertProject);
+  const { developer } = useAuth();
   const { selectedOrganizationId } = useOrganizations();
+  const showOrganizationFilters = Boolean(selectedOrganizationId);
   const boardStatuses = useMemo(() => taskStatusesForScope(selectedOrganizationId), [selectedOrganizationId]);
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  const visibleBoardTasks = useMemo(() => tasks.filter(isBoardTask), [tasks]);
+  const isCurrentDeveloper = useMemo(() => {
+    const developerId = developer?.developer_id;
+    const developerEmail = developer?.email?.toLowerCase();
+    return (id?: string | null, email?: string | null) => {
+      if (developerId && id === developerId) return true;
+      return Boolean(developerEmail && email?.toLowerCase() === developerEmail);
+    };
+  }, [developer?.developer_id, developer?.email]);
+  const filterCounts = useMemo<Record<TaskFilter, number>>(() => ({
+    all: visibleBoardTasks.length,
+    created_by_me: visibleBoardTasks.filter((task) => isCurrentDeveloper(task.creator_developer_id, task.creator_email)).length,
+    assigned_to_me: visibleBoardTasks.filter((task) => isCurrentDeveloper(task.assignee_developer_id, task.assignee_email)).length,
+    team: visibleBoardTasks.filter((task) => Boolean(task.team_id)).length,
+    unassigned: visibleBoardTasks.filter((task) => !task.team_id && !task.assignee_developer_id).length,
+  }), [isCurrentDeveloper, visibleBoardTasks]);
+  const filteredTasks = useMemo(() => {
+    if (!showOrganizationFilters) return visibleBoardTasks;
+
+    switch (taskFilter) {
+      case 'created_by_me':
+        return visibleBoardTasks.filter((task) => isCurrentDeveloper(task.creator_developer_id, task.creator_email));
+      case 'assigned_to_me':
+        return visibleBoardTasks.filter((task) => isCurrentDeveloper(task.assignee_developer_id, task.assignee_email));
+      case 'team':
+        return visibleBoardTasks.filter((task) => Boolean(task.team_id));
+      case 'unassigned':
+        return visibleBoardTasks.filter((task) => !task.team_id && !task.assignee_developer_id);
+      case 'all':
+      default:
+        return visibleBoardTasks;
+    }
+  }, [isCurrentDeveloper, showOrganizationFilters, taskFilter, visibleBoardTasks]);
   const grouped = useMemo(() => {
     const buckets = Object.fromEntries(TASK_STATUSES.map((status) => [status, [] as Task[]])) as unknown as Record<TaskStatus, Task[]>;
-    for (const t of tasks.filter(isBoardTask)) {
+    for (const t of filteredTasks) {
       const status = (t.status === 'assigned' && !selectedOrganizationId) ? 'pending' : t.status;
       if (status in buckets) buckets[status].push(t);
     }
     for (const s of TASK_STATUSES) buckets[s].sort((a, b) => b.updated_at - a.updated_at);
     return buckets;
-  }, [tasks, selectedOrganizationId]);
+  }, [filteredTasks, selectedOrganizationId]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [deleteAllStatus, setDeleteAllStatus] = useState<TaskStatus | null>(null);
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
@@ -64,9 +108,53 @@ export function Board() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
+  useEffect(() => {
+    if (!showOrganizationFilters && taskFilter !== 'all') setTaskFilter('all');
+  }, [showOrganizationFilters, taskFilter]);
+
   function handleDragStart(event: DragStartEvent) {
     const task = (event.active.data.current as { task: Task } | undefined)?.task ?? null;
     setActiveTask(task);
+  }
+
+  // Personal tasks skip the StartTaskDialog for speed, but they still need a workspace
+  // folder + runtime/model persisted on the task — otherwise the run executes with no
+  // working directory and that info (and the resulting chat) never shows on the task page.
+  function resolveStartSettings(task: Task) {
+    const saved = readSavedStartSettings();
+    const workspacePath = task.workspace_path
+      ?? saved.workspacePath
+      ?? currentProjectPath
+      ?? localStorage.getItem('bees:lastWorkspacePath');
+    if (!workspacePath) return null;
+
+    return {
+      workspacePath,
+      runtime: task.agent_runtime ?? saved.runtime ?? null,
+      model: task.agent_model ?? saved.model ?? null,
+      reasoningEffort: task.reasoning_effort ?? saved.reasoningEffort ?? null,
+      taskMode: task.task_mode ?? saved.taskMode ?? 'direct',
+    };
+  }
+
+  async function quickStartPersonalTask(task: Task, settings: NonNullable<ReturnType<typeof resolveStartSettings>>): Promise<Task> {
+    upsertTask({ ...task, status: 'in_progress', updated_at: Date.now() });
+    try {
+      const result = await startTask(task.id, settings);
+      writeSavedStartSettings(settings);
+      upsertTask(result.task);
+      setCurrentProjectPath(settings.workspacePath);
+      void updateCurrentProject(settings.workspacePath)
+        .then((current) => {
+          if (current.project) upsertProject(current.project);
+        })
+        .catch(() => undefined);
+      announceTaskStarted();
+      return result.task;
+    } catch (error) {
+      upsertTask(task);
+      throw error;
+    }
   }
 
   async function handleDragEnd(event: DragEndEvent) {
@@ -81,9 +169,18 @@ export function Board() {
     if ((task.status === 'pending' || task.status === 'assigned') && targetStatus === 'in_progress') {
       if (task.organization_id) {
         setStartQueue({ tasks: [task], index: 0, source: 'single' });
-      } else {
-        await optimisticMoveTask(task, targetStatus, upsertTask, moveTask);
+        return;
+      }
+      const settings = resolveStartSettings(task);
+      if (!settings) {
+        setStartQueue({ tasks: [task], index: 0, source: 'single' });
+        return;
+      }
+      try {
+        await quickStartPersonalTask(task, settings);
         navigate(`/tasks/${task.id}`);
+      } catch {
+        // Start failed; task state was already reverted.
       }
       return;
     }
@@ -94,11 +191,16 @@ export function Board() {
   function handleRequestStart(task: Task) {
     if (task.organization_id) {
       setStartQueue({ tasks: [task], index: 0, source: 'single' });
-    } else {
-      void optimisticMoveTask(task, 'in_progress', upsertTask, moveTask).then(() => {
-        navigate(`/tasks/${task.id}`);
-      });
+      return;
     }
+    const settings = resolveStartSettings(task);
+    if (!settings) {
+      setStartQueue({ tasks: [task], index: 0, source: 'single' });
+      return;
+    }
+    void quickStartPersonalTask(task, settings)
+      .then(() => navigate(`/tasks/${task.id}`))
+      .catch(() => undefined);
   }
 
   function closeStartQueue() {
@@ -134,15 +236,25 @@ export function Board() {
     setIsFlushingPending(true);
     setFlushPendingError(null);
 
-    const personalTasks = targets.filter((t) => !t.organization_id);
-    const orgTasks = targets.filter((t) => t.organization_id);
+    const needsDialog: Task[] = [];
 
-    for (const task of personalTasks) {
-      void optimisticMoveTask(task, 'in_progress', upsertTask, moveTask);
+    for (const task of targets) {
+      if (task.organization_id) {
+        needsDialog.push(task);
+        continue;
+      }
+      const settings = resolveStartSettings(task);
+      if (!settings) {
+        needsDialog.push(task);
+        continue;
+      }
+      void quickStartPersonalTask(task, settings).catch((error) => {
+        setFlushPendingError(toErrorMessage(error, 'Failed to start task'));
+      });
     }
 
-    if (orgTasks.length > 0) {
-      setStartQueue({ tasks: orgTasks, index: 0, source: 'flush' });
+    if (needsDialog.length > 0) {
+      setStartQueue({ tasks: needsDialog, index: 0, source: 'flush' });
     } else {
       setIsFlushingPending(false);
     }
@@ -261,6 +373,40 @@ export function Board() {
       onDragEnd={handleDragEnd}
     >
       <div className="flex min-h-0 flex-1 flex-col">
+        {showOrganizationFilters && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-6 py-3 dark:border-zinc-800">
+            {([
+              ['all', 'All'],
+              ['created_by_me', 'Created by me'],
+              ['assigned_to_me', 'Assigned to me'],
+              ['team', 'Team'],
+              ['unassigned', 'Unassigned'],
+            ] as const).map(([filter, label]) => {
+              const selected = taskFilter === filter;
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setTaskFilter(filter)}
+                  className={`inline-flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium transition ${
+                    selected
+                      ? 'bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-100 dark:text-zinc-950 dark:ring-zinc-700'
+                      : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+                  }`}
+                >
+                  <span>{label}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] leading-none ${
+                    selected
+                      ? 'bg-zinc-200 text-zinc-700 dark:bg-zinc-300 dark:text-zinc-700'
+                      : 'bg-zinc-200/70 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+                  }`}>
+                    {filterCounts[filter]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="flex min-h-0 flex-1 gap-6 overflow-x-auto p-6">
           {boardStatuses.map((status, index) => (
             <Column

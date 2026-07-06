@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { FolderOpen, GitBranch, Loader2, Play, X } from 'lucide-react';
-import type { AgentRuntime, ReasoningEffort, Task, TaskMode } from '@shared/types';
+import type { Task, TaskMode } from '@shared/types';
 import { InputToolbar } from './InputToolbar';
 import { pickWorkspaceDirectory, startTask, updateCurrentProject } from '../lib/api';
 import { useAgentConfig } from '../hooks/useAgentConfig';
 import { useStore } from '../lib/store';
 import { toErrorMessage } from '../lib/format';
+import { readSavedStartSettings, writeSavedStartSettings } from '../lib/startTaskSettings';
 
 interface StartTaskDialogProps {
   task: Task;
@@ -16,33 +17,6 @@ interface StartTaskDialogProps {
   onSkip?: () => void;
 }
 
-interface SavedStartSettings {
-  workspacePath?: string | null;
-  runtime?: AgentRuntime | null;
-  model?: string | null;
-  reasoningEffort?: ReasoningEffort | null;
-  taskMode?: TaskMode;
-}
-
-const STORAGE_KEY = 'bees:startTaskSettings';
-
-function readSavedSettings(): SavedStartSettings {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as SavedStartSettings;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeSavedSettings(settings: SavedStartSettings) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Best-effort convenience only.
-  }
-}
-
 export function StartTaskDialog({
   task,
   title = 'Start task',
@@ -51,7 +25,7 @@ export function StartTaskDialog({
   onClose,
   onSkip,
 }: StartTaskDialogProps) {
-  const saved = useMemo(readSavedSettings, []);
+  const saved = useMemo(readSavedStartSettings, []);
   const currentProjectPath = useStore((s) => s.currentProjectPath);
   const setCurrentProjectPath = useStore((s) => s.setCurrentProjectPath);
   const upsertProject = useStore((s) => s.upsertProject);
@@ -121,7 +95,7 @@ export function StartTaskDialog({
         taskMode,
       };
       const result = await startTask(task.id, settings);
-      writeSavedSettings(settings);
+      writeSavedStartSettings(settings);
       setCurrentProjectPath(normalizedWorkspacePath);
       void updateCurrentProject(normalizedWorkspacePath)
         .then((current) => {

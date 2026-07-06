@@ -4,7 +4,6 @@ import {
   buildTaskPlanningRequest,
   buildTaskPlanningSystemPrompt,
 } from './prompts/task-agent.js';
-import { defaultRuntime } from './runtime-config.js';
 import { startTaskRun } from './task-runner.js';
 import type { AgentRuntime, ReasoningEffort, Task, TaskKind, TaskMode } from '../shared/types.js';
 
@@ -116,7 +115,7 @@ export function createTaskRecord(input: {
     assignee_email: input.assigneeEmail ?? null,
     assignee_first_name: input.assigneeFirstName ?? null,
     assignee_last_name: input.assigneeLastName ?? null,
-    agent_runtime: input.runtime ?? defaultRuntime(),
+    agent_runtime: input.runtime ?? null,
     agent_model: input.model ?? null,
     reasoning_effort: input.reasoningEffort ?? null,
   });

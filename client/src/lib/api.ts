@@ -159,6 +159,7 @@ export function patchTask(
     status?: TaskStatus;
     workspacePath?: string | null;
     runtime?: AgentRuntime | null;
+    taskMode?: TaskMode;
     teamId?: string | null;
     assigneeDeveloperId?: string | null;
   },
@@ -230,6 +231,11 @@ export async function createTask(
     const formData = new FormData();
     formData.append('description', description);
     appendOptionalFormValue(formData, 'title', title);
+    appendOptionalFormValue(formData, 'workspacePath', workspacePath);
+    appendOptionalFormValue(formData, 'runtime', runtime);
+    appendOptionalFormValue(formData, 'model', model);
+    appendOptionalFormValue(formData, 'reasoningEffort', reasoningEffort);
+    appendOptionalFormValue(formData, 'taskMode', taskMode);
     appendOptionalFormValue(formData, 'taskKind', taskKind);
     appendOptionalFormValue(formData, 'teamId', assignment?.teamId);
     appendOptionalFormValue(formData, 'assigneeEmail', assignment?.assigneeEmail);
@@ -248,6 +254,11 @@ export async function createTask(
     body: JSON.stringify({
       description,
       title,
+      workspacePath,
+      runtime,
+      model,
+      reasoningEffort,
+      taskMode,
       taskKind,
       teamId: assignment?.teamId,
       assigneeEmail: assignment?.assigneeEmail,

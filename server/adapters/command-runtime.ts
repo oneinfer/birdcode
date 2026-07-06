@@ -269,7 +269,11 @@ function applyCodexDefaults(args: string[], options?: AgentRunOptions): string[]
     next.push('-c', `model_reasoning_effort="${effortValue}"`);
   }
   if (!hasFlag(next, '-s', '--sandbox') && !hasFlag(next, '--dangerously-bypass-approvals-and-sandbox')) {
-    next.push('--sandbox', 'workspace-write');
+    // Codex's OS-level sandbox on Windows shells out via CreateProcessAsUserW, which is
+    // denied under this server's execution context (fails every tool call with error 5).
+    // Skip the sandbox there; workspace-write is safe to use on other platforms.
+    if (process.platform === 'win32') next.push('--dangerously-bypass-approvals-and-sandbox');
+    else next.push('--sandbox', 'workspace-write');
   }
   if (!hasFlag(next, '--skip-git-repo-check')) next.push('--skip-git-repo-check');
   if (!hasFlag(next, '--json')) next.push('--json');
