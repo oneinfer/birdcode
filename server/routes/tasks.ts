@@ -280,7 +280,6 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
 
   if (isLocalMode() && hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
-    let savedAttachmentTaskId: string | null = null;
     try {
       const resolvedTitle = (title && typeof title === 'string' && title.trim())
         ? title.trim()
@@ -324,27 +323,18 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
               task = taskFromEnterprise(patched);
             }
           } catch (enterpriseAttachmentError) {
-            console.warn('[enterprise] create succeeded but attachment message upload failed; using local fallback attachments', {
-              taskId: task.id,
-              error: toErrorMessage(enterpriseAttachmentError, 'Attachment upload failed'),
+            await enterpriseJson(req, `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' }).catch((cleanupError) => {
+              console.warn('[enterprise] failed to roll back task after attachment upload failure', {
+                taskId: task.id,
+                error: toErrorMessage(cleanupError, 'unknown'),
+              });
             });
-            savedAttachmentTaskId = task.id;
-            const attachments = await enrichImageAttachmentContext(await saveTaskAttachments(task.id, files));
-            if (attachments.length > 0) {
-              const patched = await enterpriseJson<Record<string, unknown>>(
-                req,
-                `/organization/${orgId}/tasks/${encodeURIComponent(task.id)}`,
-                {
-                  method: 'PATCH',
-                  body: JSON.stringify({ description: appendAttachmentContext(description, attachments) }),
-                },
-              );
-              task = taskFromEnterprise(patched);
-            }
+            throw new Error(
+              `Your image or file could not be uploaded to your organization, so the task was not created: ${toErrorMessage(enterpriseAttachmentError, 'attachment upload failed')}`,
+            );
           }
           return res.status(201).json({ task });
         } catch (fallbackError) {
-          if (savedAttachmentTaskId) await deleteTaskAttachments(savedAttachmentTaskId).catch(() => undefined);
           return res.status((fallbackError as { status?: number }).status ?? 502).json({
             error: toErrorMessage(fallbackError, 'Failed to create organization task on enterprise OpenBees'),
           });

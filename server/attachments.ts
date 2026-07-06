@@ -7,10 +7,11 @@ import multer from 'multer';
 import type { Request, Response, NextFunction } from 'express';
 import type { ChatAttachment } from '../shared/types.js';
 import { resolveBeesWorkspaceDir } from './paths.js';
+import { compressOversizedImages, MAX_IMAGE_ATTACHMENT_BYTES } from './image-compression.js';
+import { toErrorMessage } from './errors.js';
 
 const ATTACHMENT_TMP_DIR = join(tmpdir(), 'bees-chat-attachments');
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-const MAX_IMAGE_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_COUNT = 10;
 
 mkdirSync(ATTACHMENT_TMP_DIR, { recursive: true });
@@ -35,18 +36,23 @@ export function attachmentUploadMiddleware(req: Request, res: Response, next: Ne
       return;
     }
     const files = uploadedAttachments(req);
-    const oversizedImage = files.find((file) => isImageUpload(file) && file.size > MAX_IMAGE_ATTACHMENT_BYTES);
-    if (oversizedImage) {
-      cleanupUploadedAttachments(files)
-        .finally(() => {
-          res.status(413).json({
-            error: `Image attachments must be 2 MB or smaller: ${oversizedImage.originalname || oversizedImage.filename}`,
-            code: 'IMAGE_ATTACHMENT_TOO_LARGE',
+    compressOversizedImages(files, MAX_IMAGE_ATTACHMENT_BYTES)
+      .then((stillTooLarge) => {
+        if (stillTooLarge.length > 0) {
+          return cleanupUploadedAttachments(files).then(() => {
+            res.status(413).json({
+              error: `Image attachments must be 2 MB or smaller: ${stillTooLarge.join(', ')}`,
+              code: 'IMAGE_ATTACHMENT_TOO_LARGE',
+            });
           });
+        }
+        next();
+      })
+      .catch((compressionError) => {
+        cleanupUploadedAttachments(files).finally(() => {
+          res.status(500).json({ error: toErrorMessage(compressionError, 'Failed to process attachments') });
         });
-      return;
-    }
-    next();
+      });
   });
 }
 
@@ -56,10 +62,6 @@ export function uploadedAttachments(req: Request): Express.Multer.File[] {
 
 export async function cleanupUploadedAttachments(files: Express.Multer.File[]): Promise<void> {
   await Promise.all(files.map((file) => unlink(file.path).catch(() => undefined)));
-}
-
-function isImageUpload(file: Express.Multer.File): boolean {
-  return (file.mimetype || '').startsWith('image/');
 }
 
 export async function deleteTaskAttachments(taskId: string): Promise<void> {
