@@ -11,7 +11,7 @@ import { isEditableTarget } from '../lib/keyboard';
 import { taskStatusesForScope } from '../lib/taskState';
 import { TaskChat } from './TaskChat';
 import type { AgentRunSettings } from '../lib/api';
-import type { TaskStatus } from '@shared/types';
+import type { AgentRuntime, TaskStatus } from '@shared/types';
 import { getProjectLabel, projectHref } from '../lib/projects';
 
 class ChatErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
@@ -76,6 +76,12 @@ export function TaskDetailPage() {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const markViewedInFlightRef = useRef<string | null>(null);
+  const [liveAgentSettings, setLiveAgentSettings] = useState<{ runtime: AgentRuntime | null; model: string | null } | null>(null);
+  const handleAgentSettingsChange = useCallback((settings: { runtime: AgentRuntime | null; model: string | null }) => {
+    setLiveAgentSettings((current) => (
+      current && current.runtime === settings.runtime && current.model === settings.model ? current : settings
+    ));
+  }, []);
 
   useEffect(() => {
     if (task) setTitleDraft(task.title);
@@ -190,9 +196,9 @@ export function TaskDetailPage() {
   const statusMeta = STATUS_META[task.status] ?? { label: task.status, color: 'bg-zinc-400', tint: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' };
   const statusOptions = taskStatusesForScope(task.organization_id);
   const isInactiveTask = task.status === 'pending' || task.status === 'assigned';
-  const moveStatusOptions = isInactiveTask
-    ? statusOptions.filter((status) => status !== 'in_progress')
-    : statusOptions;
+  const displayRuntime = task.agent_runtime ?? (isInactiveTask ? liveAgentSettings?.runtime ?? null : null);
+  const displayModel = task.agent_model ?? (isInactiveTask ? liveAgentSettings?.model ?? null : null);
+  const moveStatusOptions = statusOptions;
   const titleMeasureText = titleDraft || 'Name this task';
 
   return (
@@ -252,8 +258,13 @@ export function TaskDetailPage() {
                   </span>
                 )}
                 <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  {formatRuntimeLabel(task.agent_runtime)}
+                  {formatRuntimeLabel(displayRuntime)}
                 </span>
+                {displayModel && (
+                  <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    {displayModel}
+                  </span>
+                )}
                 <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   Working repo
                 </span>
@@ -274,7 +285,7 @@ export function TaskDetailPage() {
                 </Link>
               </div>
             )}
-            {!task.workspace_path && task.agent_runtime && (
+            {!task.workspace_path && (displayRuntime || displayModel) && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 {task.task_mode === 'plan' && (
                   <span className="rounded-md bg-amber-100 px-2 py-1 font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
@@ -282,8 +293,13 @@ export function TaskDetailPage() {
                   </span>
                 )}
                 <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  {formatRuntimeLabel(task.agent_runtime)}
+                  {formatRuntimeLabel(displayRuntime)}
                 </span>
+                {displayModel && (
+                  <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    {displayModel}
+                  </span>
+                )}
               </div>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -300,11 +316,6 @@ export function TaskDetailPage() {
               {(task.creator_email || task.creator_first_name) && (
                 <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   Creator: {displayIdentity(task.creator_first_name, task.creator_last_name, task.creator_email, 'Unknown')}
-                </span>
-              )}
-              {task.agent_model && (
-                <span className="rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  Model: {task.agent_model}
                 </span>
               )}
             </div>
@@ -367,6 +378,7 @@ export function TaskDetailPage() {
             initialMessage={initialMessage}
             initialSettings={initialSettings}
             workspacePath={task.workspace_path}
+            onAgentSettingsChange={handleAgentSettingsChange}
           />
         </ChatErrorBoundary>
       </div>

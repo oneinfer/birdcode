@@ -210,11 +210,11 @@ export function NewTaskPage() {
       const created = await createTask(
         text || (files.length === 1 ? 'Attached file.' : 'Attached files.'),
         undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
+        normalizedWorkspacePath || undefined,
+        runtime,
+        model,
+        reasoningEffort,
+        pendingTaskMode,
         files,
         'task',
         undefined,
@@ -223,9 +223,10 @@ export function NewTaskPage() {
       const task = created.task;
       upsertTask(task);
 
-      if (!isOrgContext && normalizedWorkspacePath) {
+      if (!isOrgContext) {
         localStorage.setItem(START_SETTINGS_STORAGE_KEY, JSON.stringify({
-          workspacePath: normalizedWorkspacePath,
+          ...readSavedStartSettings(),
+          ...(normalizedWorkspacePath ? { workspacePath: normalizedWorkspacePath } : {}),
           runtime,
           model,
           reasoningEffort,
@@ -233,7 +234,9 @@ export function NewTaskPage() {
         }));
       }
       announceTaskCreated(`Task created: ${task.title}`, task.id);
-      navigate(`/tasks/${task.id}`);
+      navigate(`/tasks/${task.id}`, {
+        state: isOrgContext ? undefined : { initialSettings: { runtime, model, reasoningEffort } },
+      });
     } catch (error) {
       setWorkspaceError(toErrorMessage(error, 'Failed to create task'));
       setIsCreating(false);

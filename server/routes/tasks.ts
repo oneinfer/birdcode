@@ -173,28 +173,6 @@ function parseBooleanFlag(value: unknown, fieldName: string): boolean {
   throw new Error(`${fieldName} must be a boolean`);
 }
 
-function hasStartTimeField(body: Record<string, unknown>): boolean {
-  return [
-    'start',
-    'startImmediately',
-    'run',
-    'workspacePath',
-    'workspace_path',
-    'repoPath',
-    'repo_path',
-    'runtime',
-    'agentRuntime',
-    'agent_runtime',
-    'model',
-    'agentModel',
-    'agent_model',
-    'reasoningEffort',
-    'reasoning_effort',
-    'taskMode',
-    'task_mode',
-  ].some((key) => Object.prototype.hasOwnProperty.call(body, key));
-}
-
 const ENTERPRISE_CREATE_FIELD_MAP: Record<string, string | null> = {
   taskKind: 'task_kind',
   taskMode: 'task_mode',
@@ -355,15 +333,11 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
     'start',
   );
 
-  if (!shouldStart && hasStartTimeField(req.body as Record<string, unknown>)) {
-    await cleanupUploadedAttachments(files);
-    return res.status(400).json({
-      error: 'Task creation only accepts task details and assignment. Choose repo and AI settings when starting the task.',
-      code: 'start_settings_not_allowed',
-    });
-  }
-
   let taskKind: TaskKind;
+  let workspacePath: string | null | undefined;
+  let runtime: ReturnType<typeof parseRuntimeValue>;
+  let runSettings: ReturnType<typeof parseRunSettingsBody>;
+  let taskMode: TaskMode;
   let organizationContext: Awaited<ReturnType<typeof loadOrganizationAccess>>;
   let taskAssignment: ReturnType<typeof resolveTaskAssignment>;
   try {
@@ -371,6 +345,14 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
     organizationContext = await loadOrganizationAccess(req, assignmentInput.organizationId || null);
     taskAssignment = resolveTaskAssignment(organizationContext, assignmentInput);
     taskKind = parseTaskKind(req.body.taskKind ?? req.body.task_kind);
+    workspacePath = parseWorkspacePath(req.body);
+    runtime = parseRuntimeValue(req.body.runtime);
+    runSettings = parseRunSettingsBody(req.body);
+    taskMode = parseTaskMode(req.body.taskMode ?? req.body.task_mode);
+    const resolvedRuntime = runtime ?? runSettings.taskFields.agent_runtime ?? defaultRuntime();
+    if (taskMode === 'plan' && !runtimeSupportsGoals(resolvedRuntime)) {
+      throw new Error(`Goal feature is not available for ${runtimeLabel(resolvedRuntime)}.`);
+    }
   } catch (error) {
     await cleanupUploadedAttachments(files);
     return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid task settings' });
@@ -391,6 +373,11 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
     description,
     status: taskAssignment.organization_id ? 'assigned' : 'pending',
     taskKind,
+    taskMode,
+    workspacePath,
+    runtime: runtime ?? runSettings.taskFields.agent_runtime ?? null,
+    model: runSettings.taskFields.agent_model ?? null,
+    reasoningEffort: runSettings.taskFields.reasoning_effort ?? null,
     organizationId: taskAssignment.organization_id,
     creatorDeveloperId: taskAssignment.creator_developer_id,
     creatorEmail: taskAssignment.creator_email,

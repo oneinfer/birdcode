@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { Router } from 'express';
 import { resolveWorkspacePath } from '../workspace-access.js';
@@ -72,18 +73,29 @@ async function openMacDirectoryPicker(): Promise<string | null> {
   }
 }
 
-async function openLinuxDirectoryPicker(initialPath: string | null): Promise<string | null> {
+async function runDirectoryPickerCommand(command: string, args: string[]): Promise<string | null | 'not_found'> {
   try {
-    const args = ['--file-selection', '--directory', '--title=Select working directory'];
-    if (initialPath) args.push(`--filename=${initialPath}`);
-    const { stdout } = await execFileAsync('zenity', args, { encoding: 'utf8' });
-    const selectedPath = stdout.trim();
-    return selectedPath ? resolveWorkspacePath(selectedPath) : null;
+    const { stdout } = await execFileAsync(command, args, { encoding: 'utf8' });
+    return stdout.trim() || null;
   } catch (error) {
-    const code = typeof error === 'object' && error && 'code' in error ? (error as { code?: number }).code : undefined;
+    const code = typeof error === 'object' && error && 'code' in error ? (error as { code?: number | string }).code : undefined;
+    if (code === 'ENOENT') return 'not_found';
     if (code === 1) return null;
     throw error;
   }
+}
+
+async function openLinuxDirectoryPicker(initialPath: string | null): Promise<string | null> {
+  const zenityArgs = ['--file-selection', '--directory', '--title=Select working directory'];
+  if (initialPath) zenityArgs.push(`--filename=${initialPath}`);
+  const zenityResult = await runDirectoryPickerCommand('zenity', zenityArgs);
+  if (zenityResult !== 'not_found') return zenityResult ? resolveWorkspacePath(zenityResult) : null;
+
+  const kdialogArgs = ['--getexistingdirectory', initialPath || homedir()];
+  const kdialogResult = await runDirectoryPickerCommand('kdialog', kdialogArgs);
+  if (kdialogResult !== 'not_found') return kdialogResult ? resolveWorkspacePath(kdialogResult) : null;
+
+  throw new Error('No folder picker is available. Install zenity or kdialog, or type the folder path directly.');
 }
 
 async function openDirectoryPicker(initialPath: string | null): Promise<string | null> {
