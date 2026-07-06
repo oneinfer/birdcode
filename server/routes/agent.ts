@@ -8,6 +8,9 @@ import type { AgentRegistry } from '../adapters/registry.js';
 import { runtimeInstallResponse, setDefaultRuntime } from '../runtime-config.js';
 import { installRuntime } from '../runtime-install.js';
 import { loadOrganizationAccess, requireTaskVisible } from '../organization-access.js';
+import { isLocalMode } from '../deployment-config.js';
+import { enterpriseJson, hasSelectedOrganization, organizationIdFromRequest } from '../enterprise-client.js';
+import { taskFromEnterprise } from './tasks.js';
 
 const FALLBACK_DEFAULTS: AgentDefaults = {
   runtime: 'hermes',
@@ -161,6 +164,23 @@ export function createTaskAgentSettingsRouter(agents: AgentRegistry): Router {
   const router = Router();
 
   router.get('/:id/agent-settings', async (req, res) => {
+    if (isLocalMode() && hasSelectedOrganization(req)) {
+      const orgId = organizationIdFromRequest(req)!;
+      let task: Task;
+      try {
+        const enterpriseTask = await enterpriseJson<Record<string, unknown>>(
+          req,
+          `/organization/${orgId}/tasks/${encodeURIComponent(req.params.id)}`,
+        );
+        task = taskFromEnterprise(enterpriseTask);
+      } catch (error) {
+        return res.status((error as { status?: number }).status ?? 404).json({ error: 'Task not found' });
+      }
+
+      const defaults = await defaultsForSettings(agents);
+      return res.json(buildTaskSettings(task, defaults, agents));
+    }
+
     let organizationContext;
     try {
       organizationContext = await loadOrganizationAccess(req);
