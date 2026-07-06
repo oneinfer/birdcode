@@ -3,9 +3,10 @@ import { Loader2, UserRound, UsersRound } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useOrganizations } from '../auth/OrganizationContext';
 import {
+  fetchAllTeamMembers,
   fetchOrganizationMembers,
-  fetchTeamMembers,
   fetchTeams,
+  groupTeamMembersByTeam,
   type OrganizationMemberResponse,
   type TeamMemberResponse,
   type TeamResponse,
@@ -52,18 +53,13 @@ export function AssignmentControls({
     Promise.all([
       fetchOrganizationMembers(accessToken, selectedOrganization.organization_id),
       fetchTeams(accessToken, selectedOrganization.organization_id),
+      fetchAllTeamMembers(accessToken, selectedOrganization.organization_id),
     ])
-      .then(async ([nextMembers, nextTeams]) => {
-        const entries = await Promise.all(
-          nextTeams.map(async (team) => [
-            team.id,
-            await fetchTeamMembers(accessToken, selectedOrganization.organization_id, team.id),
-          ] as const),
-        );
+      .then(([nextMembers, nextTeams, allTeamMembers]) => {
         if (cancelled) return;
         setMembers(nextMembers);
         setTeams(nextTeams);
-        setTeamMembers(Object.fromEntries(entries));
+        setTeamMembers(groupTeamMembersByTeam(allTeamMembers));
       })
       .catch(() => {
         if (cancelled) return;

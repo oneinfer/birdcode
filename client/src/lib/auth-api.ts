@@ -464,6 +464,21 @@ export function fetchTeamMembers(accessToken: string, organizationId: string, te
   });
 }
 
+/** All team memberships across every visible team, in one request — avoids one fetch per team. */
+export function fetchAllTeamMembers(accessToken: string, organizationId: string) {
+  return authRequest<TeamMemberResponse[]>(`/organization/${organizationId}/teams/members`, {
+    headers: authHeader(accessToken),
+  });
+}
+
+export function groupTeamMembersByTeam(members: TeamMemberResponse[]): Record<string, TeamMemberResponse[]> {
+  const byTeam: Record<string, TeamMemberResponse[]> = {};
+  for (const member of members) {
+    (byTeam[member.team_id] ??= []).push(member);
+  }
+  return byTeam;
+}
+
 export function addTeamMember(accessToken: string, organizationId: string, teamId: string, developerId: string) {
   return authRequest<TeamMemberResponse>(`/organization/${organizationId}/teams/${teamId}/members`, {
     method: 'POST',

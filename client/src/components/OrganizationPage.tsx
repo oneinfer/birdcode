@@ -20,10 +20,11 @@ import {
   deleteOrganizationMember,
   deleteTeam,
   deleteTeamMember,
+  fetchAllTeamMembers,
   fetchOrganizationInvitations,
   fetchOrganizationMembers,
-  fetchTeamMembers,
   fetchTeams,
+  groupTeamMembersByTeam,
   revokeOrganizationInvitation,
   updateOrganization,
   updateOrganizationMember,
@@ -142,7 +143,7 @@ export function OrganizationPage() {
     setLoading(true);
     setError(null);
     try {
-      const [members, invitations, teams] = await Promise.all([
+      const [members, invitations, teams, allTeamMembers] = await Promise.all([
         fetchOrganizationMembers(accessToken, nextOrganizationId),
         fetchOrganizationInvitations(accessToken, nextOrganizationId).catch((err) => {
           const message = toErrorMessage(err, '');
@@ -150,17 +151,15 @@ export function OrganizationPage() {
           throw err;
         }),
         fetchTeams(accessToken, nextOrganizationId),
+        fetchAllTeamMembers(accessToken, nextOrganizationId),
       ]);
-      const teamEntries = await Promise.all(
-        teams.map(async (team) => [team.id, await fetchTeamMembers(accessToken, nextOrganizationId, team.id)] as const),
-      );
       setDataByOrganization((current) => ({
         ...current,
         [nextOrganizationId]: {
           members,
           invitations,
           teams,
-          teamMembers: Object.fromEntries(teamEntries),
+          teamMembers: groupTeamMembersByTeam(allTeamMembers),
         },
       }));
     } catch (err) {
