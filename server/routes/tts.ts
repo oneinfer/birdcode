@@ -4,7 +4,6 @@ import { liveTts } from '../tts/live-tts.js';
 import { luxTts } from '../tts/lux-worker.js';
 import { toErrorMessage } from '../errors.js';
 import { loadOrganizationAccess, requireTaskVisible } from '../organization-access.js';
-import { isLocalMode } from '../deployment-config.js';
 import { hasSelectedOrganization } from '../enterprise-client.js';
 
 export const ttsRouter = Router();
@@ -25,7 +24,7 @@ ttsRouter.post('/synthesize', async (req, res) => {
 });
 
 ttsRouter.get('/tasks/:id/live', async (req, res) => {
-  if (!(isLocalMode() && hasSelectedOrganization(req))) {
+  if (!hasSelectedOrganization(req)) {
     try {
       const organizationContext = await loadOrganizationAccess(req);
       const task = requireTaskVisible(getTask(req.params.id), organizationContext);
