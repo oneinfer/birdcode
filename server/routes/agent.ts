@@ -8,7 +8,6 @@ import type { AgentRegistry } from '../adapters/registry.js';
 import { runtimeInstallResponse, setDefaultRuntime } from '../runtime-config.js';
 import { installRuntime } from '../runtime-install.js';
 import { loadOrganizationAccess, requireTaskVisible } from '../organization-access.js';
-import { isLocalMode } from '../deployment-config.js';
 import { enterpriseJson, hasSelectedOrganization, organizationIdFromRequest } from '../enterprise-client.js';
 import { taskFromEnterprise } from './tasks.js';
 
@@ -164,7 +163,7 @@ export function createTaskAgentSettingsRouter(agents: AgentRegistry): Router {
   const router = Router();
 
   router.get('/:id/agent-settings', async (req, res) => {
-    if (isLocalMode() && hasSelectedOrganization(req)) {
+    if (hasSelectedOrganization(req)) {
       const orgId = organizationIdFromRequest(req)!;
       let task: Task;
       try {

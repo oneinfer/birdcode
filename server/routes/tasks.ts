@@ -19,7 +19,6 @@ import {
   resolveTaskAssignment,
   visibilityParamsFromContext,
 } from '../organization-access.js';
-import { isLocalMode } from '../deployment-config.js';
 import {
   appendAttachmentContext,
   attachmentUploadMiddleware,
@@ -85,7 +84,7 @@ const LOCAL_ONLY_TASK_FIELDS = new Set(['workspacePath', 'workspace_path', 'repo
 const TASK_START_FIELDS = new Set(['start', 'startImmediately', 'run']);
 
 tasksRouter.get('/', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
     try {
@@ -107,7 +106,7 @@ tasksRouter.get('/', async (req, res) => {
 });
 
 tasksRouter.get('/:id', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     try {
       const task = await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks/${encodeURIComponent(req.params.id)}`);
@@ -256,7 +255,7 @@ tasksRouter.post('/', attachmentUploadMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'description is required' });
   }
 
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     try {
       const resolvedTitle = (title && typeof title === 'string' && title.trim())
@@ -448,7 +447,7 @@ tasksRouter.post('/:id/start', attachmentUploadMiddleware, async (req, res) => {
   }
 
   // Enterprise path: task lives on the enterprise server, not in local SQLite
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     let enterpriseTask: Record<string, unknown>;
     try {
@@ -599,7 +598,7 @@ function hasAssignmentUpdate(body: Record<string, unknown>): boolean {
 }
 
 tasksRouter.patch('/:id', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     const body = Object.fromEntries(
       Object.entries(req.body as Record<string, unknown>)
@@ -682,7 +681,7 @@ tasksRouter.patch('/:id', async (req, res) => {
 });
 
 tasksRouter.post('/:id/viewed', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     try {
       const task = await enterpriseJson<Record<string, unknown>>(req, `/organization/${orgId}/tasks/${encodeURIComponent(req.params.id)}`);
@@ -710,7 +709,7 @@ tasksRouter.post('/:id/viewed', async (req, res) => {
 });
 
 tasksRouter.delete('/:id', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     try {
       await enterpriseJson<unknown>(req, `/organization/${orgId}/tasks/${encodeURIComponent(req.params.id)}`, { method: 'DELETE' });
@@ -747,7 +746,7 @@ tasksRouter.delete('/:id', async (req, res) => {
 });
 
 tasksRouter.post('/:id/move', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req)!;
     const { status } = req.body as { status?: string };
     try {

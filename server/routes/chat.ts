@@ -22,7 +22,6 @@ import {
 } from '../attachments.js';
 import { enrichImageAttachmentContext } from '../image-context.js';
 import { loadOrganizationAccess, requireTaskMutable, requireTaskVisible } from '../organization-access.js';
-import { isLocalMode } from '../deployment-config.js';
 import { enterpriseJson, formDataFromRequestBody, hasSelectedOrganization, organizationIdFromRequest, proxyEnterpriseJson } from '../enterprise-client.js';
 import { taskFromEnterprise } from './tasks.js';
 
@@ -55,7 +54,7 @@ function hasNoSession(task: Task): boolean {
 }
 
 chatRouter.get('/:id/messages', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req);
     if (!orgId) return res.status(400).json({ error: 'Organization ID required' });
     try {
@@ -98,7 +97,7 @@ chatRouter.get('/:id/messages', async (req, res) => {
 });
 
 chatRouter.get('/:id/session', async (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req);
     if (!orgId) return res.status(400).json({ error: 'Organization ID required' });
     return proxyEnterpriseJson(req, res, `/organization/${encodeURIComponent(orgId)}/tasks/${encodeURIComponent(req.params.id)}/session`);
@@ -126,7 +125,7 @@ chatRouter.get('/:id/session', async (req, res) => {
 chatRouter.post('/:id/messages', attachmentUploadMiddleware, async (req, res) => {
   const taskId = String(req.params.id);
 
-  if (isLocalMode() && hasSelectedOrganization(req)) {
+  if (hasSelectedOrganization(req)) {
     const orgId = organizationIdFromRequest(req);
     if (!orgId) return res.status(400).json({ error: 'Organization ID required' });
     const content = typeof req.body?.content === 'string' ? req.body.content : null;
@@ -223,8 +222,8 @@ chatRouter.post('/:id/messages', attachmentUploadMiddleware, async (req, res) =>
 });
 
 chatRouter.get('/:id/live', (req, res) => {
-  if (isLocalMode() && hasSelectedOrganization(req)) {
-    // Agent runs always execute locally even in local+org mode.
+  if (hasSelectedOrganization(req)) {
+    // Organization agent runs execute locally while task metadata stays shared.
     // The enterprise server has no /live SSE endpoint, so always serve locally.
     const run = getRun(req.params.id);
     initSSE(res);
