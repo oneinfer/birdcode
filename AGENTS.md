@@ -74,6 +74,7 @@ All persistent state lives under `BEES_HOME` (default: `~/.bees/`):
 - **Per-task model/reasoning**: Each task can override the default Hermes model and reasoning effort (`agent_model`, `reasoning_effort` columns on `tasks`). Settings logic lives in `server/agent-settings.ts`. The Python worker resolves the final model/provider from Hermes config + per-task overrides.
 - **Live chat**: `POST /api/tasks/:id/messages` returns `202` immediately with a `runId`. The server consumes the agent stream in the background via `consumeChatRun()` in `server/routes/chat.ts`. Clients subscribe to `GET /api/tasks/:id/live` SSE for real-time `text_delta`, `thinking_delta`, `tool_progress`, `done`, and `error` events. On connect, the client receives a snapshot of the current in-memory `LiveChatRun` if one exists. Runs are kept in memory briefly after completion (30s normal, 5min on error) so late-connecting clients can catch up.
 - **Live-chat state** (`server/live-chat.ts`): In-memory `Map<taskId, LiveChatRun>` accumulates streaming events into structured messages (user + assistant with tools/thinking/usage). This is ephemeral — on server restart, active run state is lost, but the Hermes session history remains in SessionDB.
+- **Command runtimes** (`server/adapters/command-runtime.ts`): Pluggable `AgentAdapter` for CLI runtimes (`codex`, `claude_code`, `opencode`) registered in `server/adapters/registry.ts`. Each chat message spawns the CLI with the prompt on stdin and normalizes stdout into `StreamEvent`s; these runtimes are stateless (no history replay between turns). Runtime metadata (label, install command, model/reasoning controls) lives in `server/runtime-config.ts`; per-task runtime/model/reasoning overrides flow through `taskRunSettings()`. OpenCode specifics: runs `opencode run --pure --format json --auto --thinking [--model provider/model]` using the user's real OpenCode config/auth (no XDG isolation), so authenticated providers (e.g. `opencode-go` with Kimi models) work. Model discovery shells out to `opencode models` and reads the default model from `opencode.json`/`opencode.jsonc`.
 - **SSE board events**: `/api/events` broadcasts board-level events (task CRUD) to all clients. Separate from per-task live chat SSE.
 - **Disconnect resilience**: If the browser disconnects during a stream, the server continues draining the worker stream to completion. On successful completion, `last_agent_response_at` is recorded for the task.
 - **Cron jobs**: Hermes manages cron job state internally. Bees exposes endpoints to list, pause, resume, trigger, and remove jobs. Cron jobs link back to their originating task via `origin.platform === 'bees'`.
@@ -189,6 +190,9 @@ HERMES_AGENT_RUN_LIMIT=10        # Max concurrent agent runs in Python worker (c
 BEES_HOME=~/.bees          # State directory (DB, logs, backups, workspace)
 DB_PATH=~/.bees/data/bees.db  # SQLite database path
 BEES_MODEL_LIST_CACHE_TTL_SECONDS=60  # Cache TTL for model list in Python worker
+BEES_DEFAULT_RUNTIME=hermes      # Default runtime for new tasks: hermes | codex | claude_code | opencode
+BEES_OPENCODE_COMMAND=opencode   # Command used for the OpenCode runtime (also BEES_CODEX_COMMAND, BEES_CLAUDE_CODE_COMMAND)
+BEES_OPENCODE_TIMEOUT_SECONDS=   # Per-runtime chat timeout (default: no timeout; BEES_COMMAND_RUNTIME_TIMEOUT_SECONDS sets a global one)
 ```
 
 ## Hermes Python Library
