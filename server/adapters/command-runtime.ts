@@ -307,10 +307,9 @@ function applyOpenCodeDefaults(args: string[], options?: AgentRunOptions): strin
   const normalized = args[0] === 'run' ? args.slice(1) : args.slice();
   const next = ['run', ...normalized];
   if (!hasFlag(next, '--pure')) next.push('--pure');
-  if (!hasFlag(next, '--format')) next.push('--format', 'default');
-  if (!hasFlag(next, '--dangerously-skip-permissions')) {
-    next.push('--dangerously-skip-permissions');
-  }
+  if (!hasFlag(next, '--format')) next.push('--format', 'json');
+  if (!hasFlag(next, '--auto')) next.push('--auto');
+  if (!hasFlag(next, '--thinking')) next.push('--thinking');
   if (!hasFlag(next, '-m', '--model') && options?.settings?.model) {
     next.push('--model', options.settings.model);
   }
@@ -597,6 +596,61 @@ function normalizeClaudeEvent(record: Record<string, unknown>, state: RuntimeStr
   return events;
 }
 
+function openCodeToolLabel(part: Record<string, unknown>): string | undefined {
+  const state = isRecord(part.state) ? part.state : null;
+  const title = state ? stringValue(state.title) : null;
+  if (title) return title;
+  const input = state && isRecord(state.input) ? state.input : null;
+  if (input) {
+    const detail = stringValue(input.command)
+      ?? stringValue(input.filePath)
+      ?? stringValue(input.path)
+      ?? stringValue(input.pattern)
+      ?? stringValue(input.url)
+      ?? stringValue(input.query);
+    if (detail) return detail;
+  }
+  return stringValue(part.tool) ?? undefined;
+}
+
+function normalizeOpenCodeEvent(record: Record<string, unknown>, state: RuntimeStreamState): StreamEvent[] {
+  const events: StreamEvent[] = [];
+  const type = stringValue(record.type) ?? '';
+  const part = isRecord(record.part) ? record.part : null;
+
+  if ((type === 'text' || type === 'reasoning') && part) {
+    const text = stringValue(part.text) ?? '';
+    const key = stringValue(part.id) ?? type;
+    emitSnapshotDelta(state, type === 'text' ? 'text_delta' : 'thinking_delta', key, text, events);
+    return events;
+  }
+
+  if (type === 'tool_use' && part) {
+    const toolState = isRecord(part.state) ? part.state : null;
+    const rawStatus = stringValue(toolState?.status) ?? 'running';
+    const status = rawStatus === 'completed' ? 'completed' : rawStatus === 'error' ? 'error' : 'running';
+    const key = stringValue(part.callID) ?? stringValue(part.id) ?? 'opencode-tool';
+    emitToolProgress(state, key, {
+      type: 'tool_progress',
+      tool: stringValue(part.tool) ?? 'tool',
+      status,
+      label: openCodeToolLabel(part),
+      details: toolState ?? part,
+    }, events);
+    return events;
+  }
+
+  if (type === 'error') {
+    const error = isRecord(record.error)
+      ? stringValue(record.error.message)
+      : stringValue(record.error) ?? stringValue(record.message);
+    events.push({ type: 'error', error: error ?? 'OpenCode reported an error', code: 'runtime_stream_error' });
+    return events;
+  }
+
+  return events;
+}
+
 function normalizeGenericJsonEvent(record: Record<string, unknown>, state: RuntimeStreamState): StreamEvent[] {
   const events: StreamEvent[] = [];
   const type = stringValue(record.type) ?? stringValue(record.event) ?? '';
@@ -635,6 +689,7 @@ function normalizeGenericJsonEvent(record: Record<string, unknown>, state: Runti
 function normalizeStructuredEvent(record: Record<string, unknown>, state: RuntimeStreamState): StreamEvent[] {
   if (state.runtime === 'codex') return normalizeCodexEvent(record, state);
   if (state.runtime === 'claude_code') return normalizeClaudeEvent(record, state);
+  if (state.runtime === 'opencode') return normalizeOpenCodeEvent(record, state);
   return normalizeGenericJsonEvent(record, state);
 }
 
@@ -664,7 +719,7 @@ function pushStreamEvent(
   event: StreamEvent,
 ): void {
   if (
-    state.runtime !== 'codex' ||
+    (state.runtime !== 'codex' && state.runtime !== 'opencode') ||
     event.type !== 'text_delta' ||
     !event.content ||
     event.content.length < 120
@@ -940,6 +995,26 @@ async function runProcessCapture(
   });
 }
 
+async function discoverOpenCodeDefaultModel(): Promise<string | null> {
+  const candidates: string[] = [];
+  const envConfig = process.env.OPENCODE_CONFIG?.trim();
+  if (envConfig) candidates.push(envConfig);
+  const configHome = process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), '.config');
+  candidates.push(join(configHome, 'opencode', 'opencode.json'));
+  candidates.push(join(configHome, 'opencode', 'opencode.jsonc'));
+
+  for (const candidate of candidates) {
+    try {
+      const raw = await readFile(candidate, 'utf8');
+      const match = raw.match(/"model"\s*:\s*"([^"]+)"/);
+      if (match?.[1]?.trim()) return match[1].trim();
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+}
+
 async function discoverOpenCodeModels(command: string): Promise<AgentModelsResponse> {
   const tokens = parseCommandLine(command.trim());
   const executable = tokens.length > 0 ? resolveExecutable(tokens[0]) : 'opencode';
@@ -947,28 +1022,27 @@ async function discoverOpenCodeModels(command: string): Promise<AgentModelsRespo
     return { runtime: 'opencode', defaultModel: null, activeProvider: 'opencode', groups: [] };
   }
 
-  const dir = join(tmpdir(), 'bees-runtime-models', 'opencode', randomUUID());
-  const xdgConfigHome = join(dir, 'config');
-  const xdgDataHome = join(dir, 'data');
-  await mkdir(xdgConfigHome, { recursive: true });
-  await mkdir(xdgDataHome, { recursive: true });
+  const defaultModel = await discoverOpenCodeDefaultModel();
+  const defaultProvider = defaultModel?.split('/')[0]?.trim() || null;
 
   try {
     const result = await runProcessCapture(
       executable,
       ['models'],
-      {
-        ...process.env,
-        TERM: 'dumb',
-        NO_COLOR: '1',
-        XDG_CONFIG_HOME: xdgConfigHome,
-        XDG_DATA_HOME: xdgDataHome,
-      },
+      { ...process.env, TERM: 'dumb', NO_COLOR: '1' },
       resolveBeesWorkspaceDir(),
     );
 
     if (result.code !== 0) {
-      return { runtime: 'opencode', defaultModel: null, activeProvider: 'opencode', groups: [] };
+      const fallback = mergeModelOptions(
+        defaultModel ? [{ id: defaultModel, source: 'current' as const, isCurrentDefault: true }] : [],
+      );
+      return {
+        runtime: 'opencode',
+        defaultModel,
+        activeProvider: defaultProvider ?? 'opencode',
+        groups: fallback.length > 0 ? [{ provider: defaultProvider ?? 'OpenCode', models: fallback }] : [],
+      };
     }
 
     const grouped = new Map<string, AgentModelOption[]>();
@@ -977,18 +1051,32 @@ async function discoverOpenCodeModels(command: string): Promise<AgentModelsRespo
       const id = rest.join('/').trim();
       if (!provider || !id) continue;
       const models = grouped.get(provider) ?? [];
-      models.push({ id: line, label: id, source: 'catalog' });
+      models.push({ id: line, label: id, source: 'catalog', isCurrentDefault: line === defaultModel || undefined });
       grouped.set(provider, models);
+    }
+
+    if (defaultModel && defaultProvider && ![...grouped.values()].flat().some((model) => model.id === defaultModel)) {
+      const models = grouped.get(defaultProvider) ?? [];
+      models.unshift({ id: defaultModel, label: defaultModel.slice(defaultProvider.length + 1), source: 'current', isCurrentDefault: true });
+      grouped.set(defaultProvider, models);
     }
 
     return {
       runtime: 'opencode',
-      defaultModel: null,
-      activeProvider: grouped.keys().next().value ?? 'opencode',
+      defaultModel,
+      activeProvider: defaultProvider ?? grouped.keys().next().value ?? 'opencode',
       groups: [...grouped.entries()].map(([provider, models]) => ({ provider, models })),
     };
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  } catch {
+    const fallback = mergeModelOptions(
+      defaultModel ? [{ id: defaultModel, source: 'current' as const, isCurrentDefault: true }] : [],
+    );
+    return {
+      runtime: 'opencode',
+      defaultModel,
+      activeProvider: defaultProvider ?? 'opencode',
+      groups: fallback.length > 0 ? [{ provider: defaultProvider ?? 'OpenCode', models: fallback }] : [],
+    };
   }
 }
 
@@ -1035,10 +1123,6 @@ export class CommandRuntimeAdapter implements AgentAdapter {
     void (async () => {
       const files = await writeTaskFiles(this.runtime, sessionId, message, options);
       const promptText = await readFile(files.promptFile, 'utf8');
-      const xdgConfigHome = join(files.dir, 'xdg-config');
-      const xdgDataHome = join(files.dir, 'xdg-data');
-      await mkdir(xdgConfigHome, { recursive: true });
-      await mkdir(xdgDataHome, { recursive: true });
       const prepared = prepareCommand(this.runtime, this.command, options);
       const streamState: RuntimeStreamState = {
         runtime: this.runtime,
@@ -1093,8 +1177,6 @@ export class CommandRuntimeAdapter implements AgentAdapter {
           BEES_TASK_SYSTEM_PROMPT: options?.systemMessage ?? '',
           BEES_TASK_PROMPT_FILE: files.promptFile,
           BEES_TASK_CONTEXT_FILE: files.contextFile,
-          XDG_CONFIG_HOME: this.runtime === 'opencode' ? xdgConfigHome : process.env.XDG_CONFIG_HOME,
-          XDG_DATA_HOME: this.runtime === 'opencode' ? xdgDataHome : process.env.XDG_DATA_HOME,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
